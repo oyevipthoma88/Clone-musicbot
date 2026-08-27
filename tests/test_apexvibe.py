@@ -68,6 +68,18 @@ def test_autoplay_is_bounded_and_manual_play_can_take_over():
     assert "state.generation != token" in SOURCE
 
 
+def test_melody_style_cards_and_inline_controls_are_bounded():
+    assert "async def _make_thumbnail" in SOURCE
+    assert "Image.open(io.BytesIO(data))" in SOURCE
+    assert "len(data) > 4 * 1024 * 1024" in SOURCE
+    assert "def _play_keyboard" in SOURCE
+    assert 'callback_data="av:pause"' in SOURCE
+    assert 'callback_data="av:skip"' in SOURCE
+    assert "@client.on_callback_query" in SOURCE
+    assert "await _send_play_card" in SOURCE
+    assert "Pillow" in (ROOT / "requirements.txt").read_text(encoding="utf-8")
+
+
 def test_youtube_credentials_are_environment_only():
     assert 'os.getenv("BOT_TOKEN"' in SOURCE
     assert 'os.getenv("STRING_SESSION"' in SOURCE

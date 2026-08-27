@@ -20,10 +20,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import html
+import io
 import logging
 import os
 import random
 import re
+import textwrap
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -31,8 +34,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from pyrogram import Client, filters
-from pyrogram.types import Message
+from pyrogram import Client, enums, filters
+from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from pytgcalls import PyTgCalls
 from pytgcalls.types import MediaStream, StreamEnded
 
@@ -111,6 +114,8 @@ class Track:
     duration: int = 0
     source: str | None = None
     local_path: str | None = None
+    uploader: str = "YouTube"
+    thumbnail: str | None = None
 
 
 @dataclass
@@ -128,6 +133,7 @@ class ChatState:
     speed: float = 1.0
     paused: bool = False
     autoplaying: bool = False
+    autoplay_enabled: bool | None = None
 
 
 states: dict[int, ChatState] = {}
@@ -314,7 +320,12 @@ async def _api_search(query: str) -> Track | None:
     snippet = item.get("snippet") or {}
     if not YOUTUBE_ID_RE.fullmatch(video_id or ""):
         return None
-    return Track(video_id, snippet.get("title") or "YouTube audio", _yt_url(video_id))
+    thumbs = snippet.get("thumbnails") or {}
+    thumb = (thumbs.get("high") or thumbs.get("medium") or thumbs.get("default") or {}).get("url")
+    return Track(
+        video_id, snippet.get("title") or "YouTube audio", _yt_url(video_id),
+        uploader=snippet.get("channelTitle") or "YouTube", thumbnail=thumb,
+    )
 
 
 def _track_from_entry(entry: dict) -> Track | None:
@@ -326,6 +337,8 @@ def _track_from_entry(entry: dict) -> Track | None:
         title=(entry.get("title") or "YouTube track")[:180],
         webpage_url=entry.get("webpage_url") or _yt_url(video_id),
         duration=int(entry.get("duration") or 0),
+        uploader=entry.get("uploader") or entry.get("channel") or "YouTube",
+        thumbnail=entry.get("thumbnail"),
     )
 
 
@@ -443,6 +456,8 @@ async def resolve_direct(track: Track) -> Track | None:
         return None
     track.title = (info.get("title") or track.title)[:180]
     track.duration = int(info.get("duration") or track.duration or 0)
+    track.uploader = (info.get("uploader") or info.get("channel") or track.uploader)[:120]
+    track.thumbnail = info.get("thumbnail") or track.thumbnail
     track.source = url
     return track
 
@@ -822,6 +837,78 @@ async def _edit(message: Message, text: str) -> None:
         await message.edit_text(text)
 
 
+async def _make_thumbnail(track: Track) -> Path | None:
+    """Create a small cached card image; image failure never blocks playback."""
+    if not track.thumbnail:
+        return None
+    target = DOWNLOAD_DIR / f"{track.video_id}.card.jpg"
+    if target.is_file() and target.stat().st_size > 0:
+        return target
+    try:
+        client = await _get_http_client()
+        async with client.stream("GET", track.thumbnail, timeout=8) as response:
+            response.raise_for_status()
+            data = bytearray()
+            async for chunk in response.aiter_bytes(64 * 1024):
+                data.extend(chunk)
+                if len(data) > 4 * 1024 * 1024:
+                    return None
+        from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+        cover = Image.open(io.BytesIO(data)).convert("RGB")
+        cover.thumbnail((520, 520))
+        background = ImageOps.fit(cover, (1280, 720)).filter(ImageFilter.GaussianBlur(22))
+        canvas = background.copy().convert("RGB")
+        overlay = Image.new("RGBA", canvas.size, (8, 13, 28, 155))
+        canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay)
+        draw = ImageDraw.Draw(canvas)
+        font_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+        regular_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+        title_font = ImageFont.truetype(font_path, 48) if Path(font_path).exists() else ImageFont.load_default()
+        meta_font = ImageFont.truetype(regular_path, 28) if Path(regular_path).exists() else ImageFont.load_default()
+        cover = ImageOps.fit(cover, (420, 420))
+        canvas.paste(cover, (80, 150))
+        title = "\n".join(textwrap.wrap(track.title, width=28)[:2])
+        draw.text((560, 170), title, font=title_font, fill=(255, 255, 255, 255), spacing=12)
+        draw.text((560, 330), f"{track.uploader[:50]}  •  {_format_time(track.duration)}", font=meta_font, fill=(212, 226, 242, 255))
+        draw.text((560, 590), "APEXVIBE  •  NOW PLAYING", font=meta_font, fill=(255, 190, 70, 255))
+        canvas.convert("RGB").save(target, "JPEG", quality=88, optimize=True)
+        return target
+    except Exception as exc:  # noqa: BLE001
+        LOG.debug("thumbnail generation skipped: %s", exc)
+        return None
+
+
+def _play_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⏸ Pause", callback_data="av:pause"), InlineKeyboardButton("▶️ Resume", callback_data="av:resume")],
+        [InlineKeyboardButton("⏭ Skip", callback_data="av:skip"), InlineKeyboardButton("📋 Queue", callback_data="av:queue")],
+        [InlineKeyboardButton("🔊 Mute", callback_data="av:mute"), InlineKeyboardButton("✖ Close", callback_data="av:close")],
+    ])
+
+
+async def _send_play_card(message: Message, track: Track, status: str, requester: str, status_message: Message) -> None:
+    caption = (
+        f"<blockquote>🎶 <b>{html.escape(status)}</b>\n"
+        f"<b>{html.escape(track.title[:180])}</b>\n"
+        f"👤 {html.escape(track.uploader[:80])} · ⏱ {_format_time(track.duration)}\n"
+        f"🙋 {html.escape(requester[:80])}</blockquote>"
+    )
+    thumb = await _make_thumbnail(track)
+    try:
+        if thumb:
+            await message.reply_photo(
+                str(thumb), caption=caption, parse_mode=enums.ParseMode.HTML,
+                reply_markup=_play_keyboard(),
+            )
+            await status_message.delete()
+        else:
+            await status_message.edit_text(
+                caption, parse_mode=enums.ParseMode.HTML, reply_markup=_play_keyboard()
+            )
+    except Exception:
+        await _edit(status_message, caption)
+
+
 # ── Bot commands ─────────────────────────────────────────────────────────────
 def _queue_text(state: ChatState) -> str:
     lines = [f"🎵 Current: {state.current.title}" if state.current else "🎵 Nothing is playing"]
@@ -882,6 +969,7 @@ async def _play_requested(message: Message, query: str, *, force: bool = False) 
         LOG.error("play command failed: %s", exc)
         ok = False
     error_text = None
+    started = False
     async with state.control_lock:
         if state.generation == generation:
             state.play_task = None
@@ -893,10 +981,15 @@ async def _play_requested(message: Message, query: str, *, force: bool = False) 
                     _spawn(_start_next(chat_id), f"next-after-play-failure-{chat_id}")
             else:
                 error_text = None
+                started = True
         else:
             error_text = None
     if error_text:
         await _edit(status, error_text)
+    elif started:
+        user = getattr(message, "from_user", None)
+        requester = getattr(user, "first_name", None) or getattr(user, "username", None) or "User"
+        await _send_play_card(message, tracks[0], "Now Playing", requester, status)
 
 
 def register_handlers(client: Client) -> None:
@@ -1073,6 +1166,30 @@ def register_handlers(client: Client) -> None:
             "/seek /seekback /rewind /speed\n"
             "/search /playlist /song"
         )
+
+    @client.on_callback_query(filters.regex(r"^av:(pause|resume|skip|queue|mute|close)$"))
+    async def inline_control(_, query: CallbackQuery) -> None:
+        action = query.data.split(":", 1)[1]
+        chat_id = query.message.chat.id
+        if action == "close":
+            await query.answer("Closed")
+            with contextlib.suppress(Exception):
+                await query.message.delete()
+            return
+        if action == "skip":
+            await query.answer("Skipped")
+            _spawn(_skip(chat_id), f"inline-skip-{chat_id}")
+            return
+        if action == "queue":
+            await query.answer()
+            await _edit(query.message, _queue_text(_state(chat_id)))
+            return
+        ok = await _control(action, chat_id)
+        if ok and action == "pause":
+            _state(chat_id).paused = True
+        elif ok and action == "resume":
+            _state(chat_id).paused = False
+        await query.answer(("Done" if ok else "Failed"), show_alert=not ok)
 
 
 async def on_stream_update(_, update) -> None:
