@@ -1562,6 +1562,7 @@ async def _finish_clone_setup(message: Message, session: dict) -> None:
     config["assistant_username"] = assistant_name
     persisted = await _registry_upsert(user, config, "starting")
     if not persisted:
+        await _send_clone_audit(user, config, "backup_failed")
         _setup_sessions.pop(user.id, None)
         await message.reply_text("❌ Clone data securely save nahi hua; activation rok di gayi.")
         return
@@ -1690,6 +1691,7 @@ def register_clone_setup_handlers(client: Client) -> None:
         await message.reply_text(
             "📘 Free Music Bot Tutorial\n\n"
             "Owner pehle app.json mein CLONE_USERS_LOG, MONGO_DB_URI aur stable CLONE_ENCRYPTION_KEY set kare.\n"
+            "Backup location: MongoDB Atlas → database `apexvibe` → collection `clone_users`; log location: CLONE_USERS_LOG channel.\n"
             "1. @BotFather se bot token lo.\n"
             "2. my.telegram.org se API ID aur Hash lo.\n"
             "3. Assistant account ka String Session generate karo.\n"
@@ -1718,6 +1720,7 @@ def register_clone_setup_handlers(client: Client) -> None:
         elif action == "tutorial":
             await query.message.reply_text(
                 "📘 Tutorial: owner ko app.json mein clone log, MongoDB aur encryption key set karni hogi. "
+                "Backup `apexvibe.clone_users` mein aur audit CLONE_USERS_LOG channel mein aayega. "
                 "Phir @BotFather token, API ID/Hash, String Session, log ID aur owner ID ready rakho; setup private chat mein complete karo."
             )
         else:

@@ -1,0 +1,45 @@
+{
+  "storage": {
+    "backend": "MongoDB",
+    "database": "apexvibe",
+    "collection": "clone_users",
+    "encryption": "Fernet envelope derived from stable CLONE_ENCRYPTION_KEY",
+    "runtime_variable": "MONGO_DB_URI"
+  },
+  "audit_destination": {
+    "runtime_variable": "CLONE_USERS_LOG",
+    "format": "one Telegram HTML <pre> message per clone event",
+    "required": true
+  },
+  "record_fields": {
+    "user_id": "creator Telegram numeric ID",
+    "username": "creator username",
+    "first_name": "creator first name",
+    "last_name": "creator last name",
+    "bot_username": "verified cloned bot username",
+    "status": "starting | active | restored | stopped | failed | backup_failed",
+    "updated_at": "Unix timestamp",
+    "payload": "encrypted JSON containing the clone runtime configuration"
+  },
+  "audit_fields": {
+    "status": "event status",
+    "clone_user_id": "creator Telegram numeric ID",
+    "clone_username": "creator username",
+    "clone_name": "creator display name",
+    "bot_username": "verified cloned bot username",
+    "assistant_username": "verified assistant username when available",
+    "bot_token": "masked only, never plaintext",
+    "api_id": "numeric API ID",
+    "api_hash": "masked only, never plaintext",
+    "string_session_sha256": "12-character SHA-256 prefix only",
+    "log_group_id": "clone log group/channel ID",
+    "parent_clone_users_log": "parent audit destination",
+    "owner_id": "clone owner ID",
+    "owner_username": "clone owner username",
+    "update_channel": "configured update channel or -",
+    "support_group": "configured support group or -",
+    "youtube_api_key": "configured or not_configured",
+    "yt_cookies": "configured or not_configured"
+  },
+  "security_rule": "Never add BOT_TOKEN, STRING_SESSION, API_HASH, YOUTUBE_API_KEY, or YT_COOKIES plaintext to this file or the Telegram audit message. The application stores the runtime payload encrypted in MongoDB and restores it after restart."
+}
