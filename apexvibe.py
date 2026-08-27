@@ -112,7 +112,6 @@ MAX_ACTIVE_CLONES = max(1, min(_int_env("MAX_ACTIVE_CLONES", 2), 4))
 CLONE_USERS_LOG = _int_env("CLONE_USERS_LOG", LOG_GROUP_ID)
 MONGO_DB_URI = os.getenv("MONGO_DB_URI", "").strip()
 CLONE_DB_NAME = os.getenv("CLONE_DB_NAME", "apexvibe").strip() or "apexvibe"
-CLONE_ENCRYPTION_KEY = os.getenv("CLONE_ENCRYPTION_KEY", "").strip()
 CLONE_REGISTRY_FILE = Path(os.getenv("CLONE_REGISTRY_FILE", "/tmp/apexvibe-clones/registry.json"))
 SESSION_DIR = Path(os.getenv("APEXVIBE_SESSION_DIR", "/tmp/apexvibe-session"))
 
@@ -976,7 +975,7 @@ async def _send_clone_audit(user, config: dict, status: str) -> bool:
 def _registry_cipher() -> Fernet:
     # A dedicated key is preferred. The fallback keeps existing deployments
     # usable without a new mandatory variable while still encrypting records.
-    seed = CLONE_ENCRYPTION_KEY or f"{API_HASH}:{BOT_TOKEN}"
+    seed = f"{API_HASH}:{BOT_TOKEN}"
     key = base64.urlsafe_b64encode(hashlib.sha256(seed.encode()).digest())
     return Fernet(key)
 
@@ -1529,9 +1528,6 @@ async def _begin_clone(message: Message, user_id: int | None = None) -> None:
     if not MONGO_DB_URI and CLONE_REGISTRY_FILE == Path("/tmp/apexvibe-clones/registry.json"):
         await message.reply_text("❌ Clone persistence ready nahi hai. App settings mein MONGO_DB_URI add karo.")
         return
-    if not CLONE_ENCRYPTION_KEY:
-        await message.reply_text("❌ Clone encryption ready nahi hai. App settings mein CLONE_ENCRYPTION_KEY add karo.")
-        return
     _setup_sessions[user_id] = {"index": 0, "deadline": time.monotonic() + 900, "config": {
         "update_channel": UPDATE_CHANNEL,
         "support_group": SUPPORT_GROUP,
@@ -1690,7 +1686,7 @@ def register_clone_setup_handlers(client: Client) -> None:
     async def tutorial_command(_, message: Message) -> None:
         await message.reply_text(
             "📘 Free Music Bot Tutorial\n\n"
-            "Owner pehle app.json mein CLONE_USERS_LOG, MONGO_DB_URI aur stable CLONE_ENCRYPTION_KEY set kare.\n"
+            "Owner pehle app.json mein CLONE_USERS_LOG aur MONGO_DB_URI set kare.\n"
             "Backup location: MongoDB Atlas → database `apexvibe` → collection `clone_users`; log location: CLONE_USERS_LOG channel.\n"
             "1. @BotFather se bot token lo.\n"
             "2. my.telegram.org se API ID aur Hash lo.\n"

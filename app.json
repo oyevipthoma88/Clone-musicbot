@@ -1,6 +1,6 @@
 {
   "name": "ApexVibe Music Bot",
-  "description": "Lightweight Telegram voice-chat music bot with fast YouTube playback",
+  "description": "Lightweight Telegram voice-chat music bot with fast YouTube playback and bounded clone workers",
   "keywords": ["telegram", "music", "youtube", "pyrogram", "pytgcalls"],
   "env": {
     "API_ID": {
@@ -12,15 +12,19 @@
       "required": true
     },
     "BOT_TOKEN": {
-      "description": "Bot token from @BotFather",
+      "description": "Parent bot token from @BotFather",
       "required": true
     },
     "STRING_SESSION": {
-      "description": "Assistant Pyrogram string session; required for voice-chat streaming",
+      "description": "Parent assistant Pyrogram string session for voice-chat streaming",
+      "required": true
+    },
+    "MONGO_DB_URI": {
+      "description": "MongoDB URI for encrypted clone-user backup across restarts",
       "required": true
     },
     "LOG_GROUP_ID": {
-      "description": "Private Telegram log group or channel ID",
+      "description": "Parent bot log group or channel ID",
       "required": true
     },
     "OWNER_ID": {
@@ -28,55 +32,20 @@
       "required": true
     },
     "OWNER_USERNAME": {
-      "description": "Owner username used in informational messages, without @",
-      "required": false
-    },
-    "UPDATE_CHANNEL": {
-      "description": "Update channel username or invite link",
-      "required": false
-    },
-    "SUPPORT_GROUP": {
-      "description": "Support group username or invite link",
-      "required": false
-    },
-    "SUPPORT_CHANNEL": {
-      "description": "Support channel username or invite link",
-      "required": false
-    },
-    "AUTOPLAY": {
-      "description": "Automatically select one related song when the queue is empty",
-      "value": "true",
-      "required": false
-    },
-    "CLONE_USERS_LOG": {
-      "description": "Private group/channel ID where one complete monospaced clone audit message per event is sent",
+      "description": "Owner Telegram username without @",
       "required": true
     },
-    "MONGO_DB_URI": {
-      "description": "Durable MongoDB connection for encrypted clone records across dyno restarts",
-      "required": true
-    },
-    "CLONE_ENCRYPTION_KEY": {
-      "description": "Stable private secret for encrypted clone records; keep it unchanged across redeploys",
-      "required": true
-    },
-    "MAX_ACTIVE_CLONES": {
-      "description": "Maximum concurrently active child music workers on this dyno; keep low for memory safety",
-      "value": "2",
-      "required": false
-    },
-    "CLONE_MODE": {
-      "description": "Internal child-worker flag; leave false for the parent ApexVibe bot",
-      "value": "false",
+    "YOUTUBE_API_KEY": {
+      "description": "Optional YouTube Data API v3 key for faster music search",
       "required": false
     },
     "YT_COOKIES": {
-      "description": "Optional Netscape cookies.txt text, base64 value, or HTTPS URL for YouTube reliability",
+      "description": "Optional raw Netscape cookies, base64 cookies, or private HTTPS cookies URL",
       "required": false
     },
-    "YOUTUBE_API_KEY": {
-      "description": "Optional YouTube Data API v3 key for faster song search",
-      "required": false
+    "CLONE_USERS_LOG": {
+      "description": "Private Telegram group/channel ID receiving one complete safe clone audit message per event",
+      "required": true
     }
   },
   "formation": {

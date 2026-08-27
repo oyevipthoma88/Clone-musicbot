@@ -4,7 +4,7 @@ ApexVibe is a deliberately small Telegram voice-chat music bot. It contains only
 
 `/play`, `/vplay`, `/cplay`, `/playforce`, `/vplayforce`, `/cvplay`, `/skip`, `/pause`, `/resume`, `/stop`, `/queue`, `/now`, `/clearqueue`, `/remove`, `/shuffle`, `/loop`, `/loopall`, `/noloop`, `/volume`, `/seek`, `/seekback`, `/rewind`, `/speed`, `/search`, `/playlist`, `/song`, `/download`, and `/help`.
 
-The runtime contains no social commands, general administration suite, startup recovery, MongoDB/GridFS, or unrelated plugins. Clone onboarding is parent-only and bounded; it does not add unrelated handlers to child music workers. That keeps the command dispatcher, memory footprint, and playback state easy to reason about on a small Heroku worker.
+The runtime contains no social commands, general administration suite, startup recovery, GridFS, or unrelated plugins. MongoDB is used only for encrypted clone-user records. Clone onboarding is parent-only and bounded; it does not add unrelated handlers to child music workers. That keeps the command dispatcher, memory footprint, and playback state easy to reason about on a small Heroku worker.
 
 ## Deploy to Heroku
 
@@ -22,11 +22,9 @@ The worker requires:
 | `STRING_SESSION` | Yes | Assistant account session used by PyTgCalls |
 | `LOG_GROUP_ID` | Yes | Private log group/channel ID |
 | `OWNER_ID` | Yes | Numeric owner ID |
-| `OWNER_USERNAME` | No | Owner username for informational links |
-| `UPDATE_CHANNEL` | No | Update channel username or link |
-| `SUPPORT_GROUP` | No | Support group username or link |
-| `SUPPORT_CHANNEL` | No | Support channel username or link |
-| `AUTOPLAY` | No | Related-track autoplay when the queue is empty; default `true` |
+| `OWNER_USERNAME` | Yes | Owner username for informational links |
+| `MONGO_DB_URI` | Yes | MongoDB URI for encrypted clone-user backup across restarts |
+| `CLONE_USERS_LOG` | Yes | Private Telegram group/channel receiving one clone audit message per event |
 | `YT_COOKIES` | No | Netscape `cookies.txt` text, base64 value, or private HTTPS URL |
 | `YOUTUBE_API_KEY` | No | YouTube Data API v3 key for fast search |
 
@@ -44,7 +42,7 @@ The parent bot exposes `/start`, `/clone`, `/tutorial`, and `/cancel` in private
 
 The token is verified through Telegram `getMe`; the assistant session is verified with a short-lived in-memory Pyrogram client. Submitted credential messages are deleted on a best-effort basis. The audit log is exactly one formatted `<pre>` message containing the setup user, verified bot username, requested IDs, update/support values, and configuration status. Bot tokens and API hashes are masked; string sessions are represented only by a SHA-256 prefix; YouTube keys and cookies are represented only as configured/not configured. Credentials are encrypted at rest and are never written to the repository, audit message, or a plaintext file.
 
-For restart persistence, fill the app.json variables `CLONE_USERS_LOG`, `MONGO_DB_URI`, and a stable random `CLONE_ENCRYPTION_KEY`. Clone records are encrypted before being stored in the MongoDB `apexvibe.clone_users` collection. On parent startup, records marked `starting` or `active` are decrypted in memory and their child workers are restored. Do not change the encryption key after deployment, or old records cannot be decrypted. The log group/channel must be private and the parent bot must be able to send messages there.
+For restart persistence, fill the app.json variables `CLONE_USERS_LOG` and `MONGO_DB_URI`. Clone records are encrypted before being stored in the MongoDB `apexvibe.clone_users` collection using a key derived from the parent API hash and bot token. On parent startup, records marked `starting` or `active` are decrypted in memory and their child workers are restored. Keep the parent API hash and bot token unchanged if existing clone records must remain restorable. The log group/channel must be private and the parent bot must be able to send messages there.
 
 A successful setup starts a bounded child ApexVibe worker with `CLONE_MODE=true`. `MAX_ACTIVE_CLONES` defaults to `2` to protect a small Heroku dyno. These child workers live only as long as the parent dyno; encrypted configuration survives a restart, but the worker must be recreated after restart. For durable independent bots at larger scale, each clone needs its own persistent deployment and secret store. The parent bot remains the music worker and does not register clone onboarding inside child workers.
 

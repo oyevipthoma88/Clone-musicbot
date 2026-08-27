@@ -3,7 +3,7 @@
     "backend": "MongoDB",
     "database": "apexvibe",
     "collection": "clone_users",
-    "encryption": "Fernet envelope derived from stable CLONE_ENCRYPTION_KEY",
+    "encryption": "Fernet envelope derived from the parent API_HASH and BOT_TOKEN",
     "runtime_variable": "MONGO_DB_URI"
   },
   "audit_destination": {

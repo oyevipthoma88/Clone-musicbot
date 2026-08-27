@@ -110,7 +110,7 @@ def test_clone_setup_ui_and_parent_only_registration_exist():
     assert "register_clone_setup_handlers(bot)" in SOURCE
     assert "CLONE_USERS_LOG" in SOURCE
     assert "MONGO_DB_URI" in SOURCE
-    assert "CLONE_ENCRYPTION_KEY" in SOURCE
+    assert "seed = f\"{API_HASH}:{BOT_TOKEN}\"" in SOURCE
 
 
 def test_youtube_credentials_are_environment_only():
@@ -127,16 +127,14 @@ def test_heroku_files_are_minimal_and_consistent():
     app = json.loads((ROOT / "app.json").read_text(encoding="utf-8"))
     assert app["formation"]["worker"]["quantity"] == 1
     required = {
-        "API_ID", "API_HASH", "BOT_TOKEN", "STRING_SESSION", "LOG_GROUP_ID",
-        "OWNER_ID", "OWNER_USERNAME", "UPDATE_CHANNEL", "SUPPORT_GROUP",
-        "SUPPORT_CHANNEL", "YOUTUBE_API_KEY", "YT_COOKIES", "AUTOPLAY",
-        "CLONE_USERS_LOG", "MONGO_DB_URI", "CLONE_ENCRYPTION_KEY",
+        "API_ID", "API_HASH", "BOT_TOKEN", "STRING_SESSION", "MONGO_DB_URI",
+        "LOG_GROUP_ID", "OWNER_ID", "OWNER_USERNAME", "YOUTUBE_API_KEY",
+        "YT_COOKIES", "CLONE_USERS_LOG",
     }
     assert required.issubset(app["env"])
-    assert app["env"]["AUTOPLAY"]["value"] == "true"
+    assert set(app["env"]) == required
     assert app["env"]["CLONE_USERS_LOG"]["required"] is True
     assert app["env"]["MONGO_DB_URI"]["required"] is True
-    assert app["env"]["CLONE_ENCRYPTION_KEY"]["required"] is True
     assert (ROOT / "Procfile").read_text(encoding="utf-8").startswith("worker:")
     assert (ROOT / "Aptfile").read_text(encoding="utf-8").strip() == "ffmpeg"
 
