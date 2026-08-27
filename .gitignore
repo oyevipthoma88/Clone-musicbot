@@ -1,0 +1,12 @@
+.env
+*.session
+*.session-journal
+cookies.txt
+*cookies*.txt
+/tmp/
+.apexvibe-cookies.txt
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+*.pyc

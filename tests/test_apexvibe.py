@@ -1,0 +1,79 @@
+import ast
+import json
+from pathlib import Path
+
+
+ROOT = Path(__file__).parents[1]
+SOURCE = (ROOT / "apexvibe.py").read_text(encoding="utf-8")
+
+
+def test_apexvibe_parses_and_has_one_runtime_script():
+    ast.parse(SOURCE, filename="apexvibe.py")
+    assert (ROOT / "apexvibe.py").is_file()
+    assert not (ROOT / "melody").exists()
+
+
+def test_only_play_and_skip_are_registered():
+    tree = ast.parse(SOURCE)
+    commands = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "command":
+            if node.args and isinstance(node.args[0], ast.Constant):
+                commands.append(node.args[0].value)
+    assert sorted(commands) == ["play", "skip"]
+    assert 'filters.command("autoplay")' not in SOURCE
+    assert "AsyncIOMotorGridFSBucket" not in SOURCE
+
+
+def test_playback_has_generation_fences_and_single_download_gate():
+    assert "_download_lock = asyncio.Lock()" in SOURCE
+    assert "def _is_current" in SOURCE
+    assert "if not _is_current(chat_id, generation):" in SOURCE
+    assert "state.generation += 1" in SOURCE
+    assert "old_task.cancel()" in SOURCE
+    assert "MAX_DOWNLOAD_SECONDS" in SOURCE
+    assert "nopart" in SOURCE
+    assert "os.replace(candidates[0], target)" in SOURCE
+    assert "-reconnect_streamed 1" in SOURCE
+
+
+def test_controls_are_detached_from_voice_transition():
+    assert 'await message.reply_text("⏭ Skipping…")' in SOURCE
+    assert '_spawn(_skip(message.chat.id)' in SOURCE
+    assert "await asyncio.wait_for(calls.leave_call(chat_id), timeout=CONTROL_TIMEOUT)" in SOURCE
+
+
+def test_stream_end_has_a_conservative_early_end_fence():
+    assert "ignoring early stale StreamEnded" in SOURCE
+    assert "time.monotonic() - state.started_at < 1.5" in SOURCE
+    assert "state.current.duration > 3" in SOURCE
+    assert "await _start_next(chat_id)" in SOURCE
+
+
+def test_youtube_credentials_are_environment_only():
+    assert 'os.getenv("BOT_TOKEN"' in SOURCE
+    assert 'os.getenv("STRING_SESSION"' in SOURCE
+    assert 'os.getenv("YT_COOKIES"' in SOURCE
+    assert 'os.getenv("YOUTUBE_API_KEY"' in SOURCE
+    assert "github_pat_" not in SOURCE
+    assert "api_key=" not in SOURCE.lower()
+
+
+def test_heroku_files_are_minimal_and_consistent():
+    app = json.loads((ROOT / "app.json").read_text(encoding="utf-8"))
+    assert app["formation"]["worker"]["quantity"] == 1
+    assert "API_ID" in app["env"]
+    assert "STRING_SESSION" in app["env"]
+    assert "MONGO_DB_URI" not in app["env"]
+    assert (ROOT / "Procfile").read_text(encoding="utf-8").startswith("worker:")
+    assert (ROOT / "Aptfile").read_text(encoding="utf-8").strip() == "ffmpeg"
+
+
+def test_readme_explains_private_repo_button_limit_and_fast_path():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "Deploy to Heroku" in readme
+    assert "oyevipthoma88/Clone-musicbot" in readme
+    assert "direct YouTube audio URL" in readme
+    assert "growing `.part`" in readme

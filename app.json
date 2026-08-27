@@ -1,0 +1,49 @@
+{
+  "name": "ApexVibe Music Bot",
+  "description": "Lightweight Telegram voice-chat music bot with fast YouTube playback",
+  "keywords": ["telegram", "music", "youtube", "pyrogram", "pytgcalls"],
+  "env": {
+    "API_ID": {
+      "description": "Telegram API ID from my.telegram.org",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Telegram API hash from my.telegram.org",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Bot token from @BotFather",
+      "required": true
+    },
+    "STRING_SESSION": {
+      "description": "Assistant Pyrogram string session; required for voice-chat streaming",
+      "required": true
+    },
+    "YT_COOKIES": {
+      "description": "Optional Netscape cookies.txt contents or base64 value for YouTube reliability",
+      "required": false
+    },
+    "COOKIE_URL": {
+      "description": "Optional private raw cookies.txt URL; use YT_COOKIES instead when possible",
+      "required": false
+    },
+    "YOUTUBE_API_KEY": {
+      "description": "Optional YouTube Data API v3 key for faster song search",
+      "required": false
+    }
+  },
+  "formation": {
+    "worker": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "buildpacks": [
+    {
+      "url": "https://github.com/heroku/heroku-buildpack-apt"
+    },
+    {
+      "url": "heroku/python"
+    }
+  ]
+}
