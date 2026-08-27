@@ -80,6 +80,31 @@ def test_melody_style_cards_and_inline_controls_are_bounded():
     assert "Pillow" in (ROOT / "requirements.txt").read_text(encoding="utf-8")
 
 
+def test_clone_setup_is_verified_bounded_and_secret_safe():
+    assert "def _verify_bot_token" in SOURCE
+    assert "getMe" in SOURCE
+    assert "def _verify_assistant" in SOURCE
+    assert "in_memory=True" in SOURCE
+    assert "def _clone_audit_text" in SOURCE
+    assert "_mask(config.get('bot_token'" in SOURCE
+    assert "string_session_sha256" in SOURCE
+    assert "asyncio.create_subprocess_exec" in SOURCE
+    assert "MAX_ACTIVE_CLONES" in SOURCE
+    assert "CLONE_MODE" in SOURCE
+    assert "stdout=asyncio.subprocess.DEVNULL" in SOURCE
+    assert "stderr=asyncio.subprocess.DEVNULL" in SOURCE
+
+
+def test_clone_setup_ui_and_parent_only_registration_exist():
+    assert "Make Your Own Music Bot" in SOURCE
+    assert "Create Free Music Bot" in SOURCE
+    assert "Free Music Tutorial" in SOURCE
+    assert 'filters.command("start") & filters.private' in SOURCE
+    assert 'filters.command("tutorial") & filters.private' in SOURCE
+    assert 'if not CLONE_MODE:' in SOURCE
+    assert "register_clone_setup_handlers(bot)" in SOURCE
+
+
 def test_youtube_credentials_are_environment_only():
     assert 'os.getenv("BOT_TOKEN"' in SOURCE
     assert 'os.getenv("STRING_SESSION"' in SOURCE

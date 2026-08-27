@@ -20,12 +20,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import hashlib
 import html
 import io
 import logging
 import os
 import random
 import re
+import sys
 import textwrap
 import time
 from collections import deque
@@ -101,6 +103,9 @@ CONTROL_TIMEOUT = max(2.0, min(_float_env("CONTROL_TIMEOUT", 5.0), 15.0))
 MAX_DOWNLOAD_SECONDS = max(30.0, min(_float_env("MAX_DOWNLOAD_SECONDS", 240.0), 900.0))
 AUTOPLAY_ENABLED = _flag_env("AUTOPLAY", True)
 AUTOPLAY_TIMEOUT = max(8.0, min(_float_env("AUTOPLAY_TIMEOUT", 25.0), 60.0))
+CLONE_MODE = _flag_env("CLONE_MODE", False)
+MAX_ACTIVE_CLONES = max(1, min(_int_env("MAX_ACTIVE_CLONES", 2), 4))
+SESSION_DIR = Path(os.getenv("APEXVIBE_SESSION_DIR", "/tmp/apexvibe-session"))
 
 
 YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -141,6 +146,8 @@ _background_tasks: set[asyncio.Task] = set()
 _download_lock = asyncio.Lock()
 _http_client: httpx.AsyncClient | None = None
 _cookie_file: Path | None = None
+_setup_sessions: dict[int, dict] = {}
+_clone_processes: dict[int, asyncio.subprocess.Process] = {}
 
 
 # ── Telegram clients ─────────────────────────────────────────────────────────
@@ -886,6 +893,149 @@ def _play_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def _mask(value: str, keep: int = 4) -> str:
+    value = value or ""
+    if len(value) <= keep * 2:
+        return "*" * len(value)
+    return f"{value[:keep]}…{value[-keep:]}"
+
+
+def _mask_hash(value: str) -> str:
+    return hashlib.sha256((value or "").encode()).hexdigest()[:12]
+
+
+async def _verify_bot_token(token: str) -> tuple[bool, str]:
+    if not re.fullmatch(r"\d{5,}:[A-Za-z0-9_-]{20,}", token):
+        return False, "Token format invalid hai."
+    try:
+        client = await _get_http_client()
+        response = await client.get(f"https://api.telegram.org/bot{token}/getMe", timeout=8)
+        data = response.json()
+        if response.is_success and data.get("ok"):
+            return True, data.get("result", {}).get("username", "verified bot")
+    except Exception:  # noqa: BLE001
+        LOG.info("clone token verification failed")
+    return False, "Bot token verify nahi hua."
+
+
+def _clone_audit_text(user, config: dict, status: str) -> str:
+    name = " ".join(filter(None, [getattr(user, "first_name", ""), getattr(user, "last_name", "")]))
+    username = getattr(user, "username", None) or ""
+    bot_username = str(config.get("bot_username", "")).strip().lstrip("@")
+    owner_username = str(config.get("owner_username", "")).strip().lstrip("@")
+    lines = [
+        "APEXVIBE CLONE AUDIT",
+        f"status: {status}",
+        f"clone_user_id: {getattr(user, 'id', '-')}",
+        f"clone_username: {('@' + username) if username else '-'}",
+        f"clone_name: {name or '-'}",
+        f"bot_username: {('@' + bot_username) if bot_username else '-'}",
+        f"bot_token: {_mask(config.get('bot_token', ''))}",
+        f"api_id: {config.get('api_id', '-')}",
+        f"api_hash: {_mask(config.get('api_hash', ''))}",
+        f"string_session_sha256: {config.get('string_session_sha256') or _mask_hash(config.get('string_session', ''))}",
+        f"log_group_id: {config.get('log_group_id', '-')}",
+        f"owner_id: {config.get('owner_id', '-')}",
+        f"owner_username: {('@' + owner_username) if owner_username else '-'}",
+        f"update_channel: {config.get('update_channel') or '-'}",
+        f"support_group: {config.get('support_group') or '-'}",
+        f"youtube_api_key: {'configured' if config.get('youtube_api_key') else 'not_configured'}",
+        f"yt_cookies: {'configured' if config.get('yt_cookies') else 'not_configured'}",
+    ]
+    return "<pre>" + html.escape("\n".join(lines)) + "</pre>"
+
+
+async def _send_clone_audit(user, config: dict, status: str) -> None:
+    if not bot or not LOG_GROUP_ID:
+        return
+    with contextlib.suppress(Exception):
+        await bot.send_message(LOG_GROUP_ID, _clone_audit_text(user, config, status), parse_mode=enums.ParseMode.HTML)
+
+
+async def _verify_assistant(api_id: int, api_hash: str, session_string: str) -> tuple[bool, str]:
+    probe = Client(
+        f"apexvibe-clone-verify-{api_id}",
+        api_id=api_id,
+        api_hash=api_hash,
+        session_string=session_string,
+        in_memory=True,
+    )
+    try:
+        await asyncio.wait_for(probe.start(), timeout=15)
+        me = await asyncio.wait_for(probe.get_me(), timeout=10)
+        return True, getattr(me, "username", None) or str(getattr(me, "id", "assistant"))
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001
+        LOG.info("clone assistant verification failed")
+        return False, "String session verify nahi hua."
+    finally:
+        with contextlib.suppress(Exception):
+            await probe.stop()
+
+
+async def _watch_clone(user, process: asyncio.subprocess.Process, audit_config: dict) -> None:
+    try:
+        exit_code = await process.wait()
+    except asyncio.CancelledError:
+        raise
+    finally:
+        if _clone_processes.get(user.id) is process:
+            _clone_processes.pop(user.id, None)
+    if exit_code != 0:
+        await _send_clone_audit(user, audit_config, "stopped")
+
+
+async def _activate_clone(user, config: dict) -> tuple[bool, str]:
+    if len(_clone_processes) >= MAX_ACTIVE_CLONES:
+        return False, "Abhi clone slots full hain. Owner se old clone stop karvao."
+    existing = _clone_processes.get(user.id)
+    if existing and existing.returncode is None:
+        return False, "Aapka clone already active hai."
+    clone_dir = Path("/tmp/apexvibe-clones") / f"{user.id}-{_mask_hash(config['bot_token'])}"
+    with contextlib.suppress(OSError):
+        clone_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env.update({
+        "API_ID": str(config["api_id"]),
+        "API_HASH": config["api_hash"],
+        "BOT_TOKEN": config["bot_token"],
+        "STRING_SESSION": config["string_session"],
+        "LOG_GROUP_ID": str(config["log_group_id"]),
+        "OWNER_ID": str(config["owner_id"]),
+        "OWNER_USERNAME": config["owner_username"],
+        "UPDATE_CHANNEL": config.get("update_channel", ""),
+        "SUPPORT_GROUP": config.get("support_group", ""),
+        "SUPPORT_CHANNEL": config.get("support_channel", ""),
+        "YOUTUBE_API_KEY": config.get("youtube_api_key", ""),
+        "YT_COOKIES": config.get("yt_cookies", ""),
+        "AUTOPLAY": "true",
+        "CLONE_MODE": "true",
+        "APEXVIBE_SESSION_DIR": str(clone_dir),
+    })
+    try:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable, str(Path(__file__)),
+            env=env, stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        LOG.warning("clone process could not start: %s", exc)
+        return False, "Clone worker start nahi ho paya."
+    _clone_processes[user.id] = process
+    await asyncio.sleep(3)
+    if process.returncode is not None:
+        _clone_processes.pop(user.id, None)
+        return False, "Clone worker health check fail hua."
+    audit_config = dict(config)
+    audit_config["bot_token"] = _mask(config.get("bot_token", ""))
+    audit_config["api_hash"] = _mask(config.get("api_hash", ""))
+    audit_config["string_session_sha256"] = _mask_hash(config.get("string_session", ""))
+    audit_config.pop("string_session", None)
+    _spawn(_watch_clone(user, process, audit_config), f"clone-watch-{user.id}")
+    return True, "Clone worker start ho gaya."
+
+
 async def _send_play_card(message: Message, track: Track, status: str, requester: str, status_message: Message) -> None:
     caption = (
         f"<blockquote>🎶 <b>{html.escape(status)}</b>\n"
@@ -1192,6 +1342,186 @@ def register_handlers(client: Client) -> None:
         await query.answer(("Done" if ok else "Failed"), show_alert=not ok)
 
 
+def _clone_home_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎵 Make Your Own Music Bot", callback_data="clone:start")],
+        [InlineKeyboardButton("🆓 Create Free Music Bot", callback_data="clone:start")],
+        [InlineKeyboardButton("📘 Free Music Tutorial", callback_data="clone:tutorial")],
+    ])
+
+
+CLONE_STEPS = (
+    ("bot_token", "Bot token bhejo. Telegram verify ke baad next step aayega."),
+    ("api_id", "API ID bhejo (sirf number)."),
+    ("api_hash", "API Hash bhejo (32-character value)."),
+    ("string_session", "Assistant String Session bhejo. Isse log mein store nahi kiya jayega."),
+    ("log_group_id", "Log group/channel ID bhejo (example: -1001234567890)."),
+    ("owner_id", "Apne owner Telegram user ID bhejo."),
+    ("owner_username", "Owner username bhejo, @ ke bina. Skip ke liye - bhejo."),
+    ("update_channel", "Update channel username/link bhejo. Skip ke liye - bhejo."),
+    ("support_group", "Support group/channel username/link bhejo. Skip ke liye - bhejo."),
+    ("youtube_api_key", "YouTube API v3 key bhejo. Optional hai; skip ke liye - bhejo."),
+    ("yt_cookies", "YouTube cookies raw/base64/private URL bhejo. Optional; skip ke liye - bhejo."),
+)
+
+
+async def _begin_clone(message: Message, user_id: int | None = None) -> None:
+    user_id = user_id or (message.from_user.id if message.from_user else 0)
+    if not user_id:
+        return
+    _setup_sessions[user_id] = {"index": 0, "config": {}}
+    await message.reply_text(
+        "🛠 ApexVibe Clone Setup\n\n"
+        "Main aapke credentials ko log mein plain text save nahi karunga. "
+        "Har step private chat mein bhejo; token/session messages ko process ke baad delete karne ki koshish hogi.\n\n"
+        + CLONE_STEPS[0][1],
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✖ Cancel", callback_data="clone:cancel")]]),
+    )
+
+
+async def _finish_clone_setup(message: Message, session: dict) -> None:
+    user = message.from_user
+    config = session["config"]
+    verified, assistant_name = await _verify_assistant(
+        int(config["api_id"]), config["api_hash"], config["string_session"]
+    )
+    if not verified:
+        _setup_sessions.pop(user.id, None)
+        await message.reply_text("❌ String session verification failed. Setup cancel kar diya.")
+        return
+    config["bot_username"] = session.get("bot_username", "verified")
+    config["assistant_username"] = assistant_name
+    ok, result = await _activate_clone(user, config)
+    await _send_clone_audit(user, config, "activated" if ok else "activation_failed")
+    _setup_sessions.pop(user.id, None)
+    if ok:
+        await message.reply_text(
+            f"✅ Clone active: @{config['bot_username']}\n"
+            "Ab us bot ko group mein add karke voice chat start karo, phir /play use karo."
+        )
+    else:
+        await message.reply_text(f"❌ {result}")
+
+
+async def _consume_clone_value(message: Message) -> None:
+    user = message.from_user
+    if not user or user.id not in _setup_sessions:
+        return
+    session = _setup_sessions[user.id]
+    index = session["index"]
+    key, _prompt = CLONE_STEPS[index]
+    value = (message.text or "").strip()
+    with contextlib.suppress(Exception):
+        await message.delete()
+    if key == "bot_token":
+        valid, bot_username = await _verify_bot_token(value)
+        if not valid:
+            await message.reply_text("❌ Bot token verify nahi hua. Dobara bhejo ya /cancel karo.")
+            return
+        session["config"][key] = value
+        session["bot_username"] = bot_username
+    elif key == "api_id":
+        if not value.isdigit() or int(value) <= 0:
+            await message.reply_text("❌ API ID number hona chahiye. Dobara bhejo.")
+            return
+        session["config"][key] = int(value)
+    elif key == "api_hash":
+        if not re.fullmatch(r"[A-Fa-f0-9]{32}", value):
+            await message.reply_text("❌ API Hash 32-character hexadecimal hona chahiye.")
+            return
+        session["config"][key] = value
+    elif key == "string_session":
+        if len(value) < 20 or any(char.isspace() for char in value):
+            await message.reply_text("❌ String session invalid lag raha hai. Dobara bhejo.")
+            return
+        session["config"][key] = value
+    elif key in {"log_group_id", "owner_id"}:
+        try:
+            number = int(value)
+            if number == 0 or (key == "owner_id" and number <= 0):
+                raise ValueError
+        except ValueError:
+            await message.reply_text("❌ Valid numeric ID bhejo.")
+            return
+        session["config"][key] = number
+    elif key in {"owner_username", "update_channel", "support_group"}:
+        if key == "owner_username":
+            username = value.lstrip("@")
+            if value != "-" and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", username):
+                await message.reply_text("❌ Valid Telegram username bhejo, @ ke bina.")
+                return
+            session["config"][key] = "" if value == "-" else username
+        else:
+            session["config"][key] = "" if value == "-" else value[:240]
+    elif key == "youtube_api_key":
+        session["config"][key] = "" if value == "-" else value[:300]
+    elif key == "yt_cookies":
+        if value != "-" and len(value) > 2 * 1024 * 1024:
+            await message.reply_text("❌ Cookies value 2MB se chhoti honi chahiye.")
+            return
+        session["config"][key] = "" if value == "-" else value
+    session["index"] += 1
+    if session["index"] >= len(CLONE_STEPS):
+        await message.reply_text("🔐 String session verify ho raha hai; thoda wait karo…")
+        await _finish_clone_setup(message, session)
+        return
+    await message.reply_text(CLONE_STEPS[session["index"]][1])
+
+
+def register_clone_setup_handlers(client: Client) -> None:
+    @client.on_message(filters.command("start") & filters.private)
+    async def start_command(_, message: Message) -> None:
+        await message.reply_text(
+            "🎵 <b>ApexVibe Music Bot</b>\n\n"
+            "Apna lightweight music bot free mein setup karo ya tutorial dekho.",
+            parse_mode=enums.ParseMode.HTML,
+            reply_markup=_clone_home_keyboard(),
+        )
+
+    @client.on_message(filters.command("clone") & filters.private)
+    async def clone_command(_, message: Message) -> None:
+        await _begin_clone(message)
+
+    @client.on_message(filters.command("tutorial") & filters.private)
+    async def tutorial_command(_, message: Message) -> None:
+        await message.reply_text(
+            "📘 Free Music Bot Tutorial\n\n"
+            "1. @BotFather se bot token lo.\n"
+            "2. my.telegram.org se API ID aur Hash lo.\n"
+            "3. Assistant account ka String Session generate karo.\n"
+            "4. Apna log group/channel ID aur owner ID ready rakho.\n"
+            "5. Setup mein values step-by-step bhejo.\n"
+            "6. Verify hone ke baad clone bot ko group mein add karke voice chat start karo.\n\n"
+            "Token aur session kisi public group mein kabhi mat bhejna."
+        )
+
+    @client.on_message(filters.command("cancel") & filters.private)
+    async def cancel_command(_, message: Message) -> None:
+        if message.from_user:
+            _setup_sessions.pop(message.from_user.id, None)
+        await message.reply_text("✅ Clone setup cancel ho gaya.")
+
+    @client.on_message(filters.private & ~filters.command(["start", "clone", "tutorial", "cancel"]))
+    async def setup_value(_, message: Message) -> None:
+        await _consume_clone_value(message)
+
+    @client.on_callback_query(filters.regex(r"^clone:(start|tutorial|cancel)$"))
+    async def clone_callback(_, query: CallbackQuery) -> None:
+        action = query.data.split(":", 1)[1]
+        await query.answer()
+        if action == "start":
+            await _begin_clone(query.message, query.from_user.id)
+        elif action == "tutorial":
+            await query.message.reply_text(
+                "📘 Tutorial: @BotFather token, API ID/Hash, String Session, log ID aur owner ID ready rakho. "
+                "Setup ke steps private chat mein complete karo."
+            )
+        else:
+            if query.from_user:
+                _setup_sessions.pop(query.from_user.id, None)
+            await query.message.edit_text("✅ Clone setup cancel ho gaya.")
+
+
 async def on_stream_update(_, update) -> None:
     if not isinstance(update, StreamEnded):
         return
@@ -1244,9 +1574,14 @@ async def main() -> None:
     global bot, assistant, calls
     _validate_config()
     await _prepare_cookies()
-    bot = Client("apexvibe-bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-    assistant = Client("apexvibe-assistant", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION)
+    with contextlib.suppress(OSError):
+        SESSION_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    instance = "apexvibe-clone" if CLONE_MODE else "apexvibe"
+    bot = Client(f"{instance}-bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN, workdir=str(SESSION_DIR))
+    assistant = Client(f"{instance}-assistant", api_id=API_ID, api_hash=API_HASH, session_string=STRING_SESSION, workdir=str(SESSION_DIR))
     register_handlers(bot)
+    if not CLONE_MODE:
+        register_clone_setup_handlers(bot)
     await bot.start()
     await assistant.start()
     calls = PyTgCalls(assistant)
@@ -1257,12 +1592,16 @@ async def main() -> None:
         except Exception as exc:  # noqa: BLE001
             LOG.error("voice update failed: %s", exc)
     await calls.start()
-    LOG.info("ApexVibe started: music-only /play and /skip")
+    LOG.info("ApexVibe started: music worker%s", " / clone host" if not CLONE_MODE else " / clone child")
     try:
         await asyncio.Event().wait()
     finally:
         for task in list(_background_tasks):
             task.cancel()
+        for process in list(_clone_processes.values()):
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.terminate()
         if _http_client and not _http_client.is_closed:
             await _http_client.aclose()
         await assistant.stop()

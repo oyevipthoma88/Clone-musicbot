@@ -4,7 +4,7 @@ ApexVibe is a deliberately small Telegram voice-chat music bot. It contains only
 
 `/play`, `/vplay`, `/cplay`, `/playforce`, `/vplayforce`, `/cvplay`, `/skip`, `/pause`, `/resume`, `/stop`, `/queue`, `/now`, `/clearqueue`, `/remove`, `/shuffle`, `/loop`, `/loopall`, `/noloop`, `/volume`, `/seek`, `/seekback`, `/rewind`, `/speed`, `/search`, `/playlist`, `/song`, `/download`, and `/help`.
 
-The runtime contains no autoplay, social commands, general administration suite, startup recovery, MongoDB/GridFS, or unrelated plugins. That keeps the command dispatcher, memory footprint, and playback state easy to reason about on a small Heroku worker.
+The runtime contains no social commands, general administration suite, startup recovery, MongoDB/GridFS, or unrelated plugins. Clone onboarding is parent-only and bounded; it does not add unrelated handlers to child music workers. That keeps the command dispatcher, memory footprint, and playback state easy to reason about on a small Heroku worker.
 
 ## Deploy to Heroku
 
@@ -37,6 +37,14 @@ The assistant account and the bot must be members of the group. The assistant ne
 A direct YouTube audio URL is attempted first. If it is rejected, ApexVibe performs one bounded audio download under a global one-slot lock, then plays the completed cache file. Completed files are kept under a capped `/tmp/apexvibe-cache` directory and old files are evicted by access time. No growing `.part` file is handed to PyTgCalls, and no full movie/video pipeline is included in this music-only build.
 
 Each chat has a generation counter. A new `/skip` cancels the previous play task and advances only the current queue state; an older resolver cannot call PyTgCalls after it has been superseded. `/skip` acknowledges immediately and performs the voice transition in a tracked background task. With `AUTOPLAY=true`, a single bounded related-track lookup starts only after the queue is empty; a manual `/play` cancels that lookup or stream before it can commit, so autoplay cannot replace a newer user request.
+
+## Free clone setup
+
+The parent bot exposes `/start`, `/clone`, `/tutorial`, and `/cancel` in private chat. The start screen includes **Make Your Own Music Bot**, **Create Free Music Bot**, and **Free Music Tutorial** buttons. Clone setup asks for the bot token, API ID, API hash, assistant string session, log group/channel ID, owner ID, owner username, update channel, support group/channel, YouTube API key, and YouTube cookies one step at a time.
+
+The token is verified through Telegram `getMe`; the assistant session is verified with a short-lived in-memory Pyrogram client. Submitted credential messages are deleted on a best-effort basis. The audit log is one formatted message containing the setup user and non-secret IDs, while bot tokens are masked and string sessions are represented only by a SHA-256 prefix. Credentials are passed only through the child process environment and are not written to the repository, audit message, or a plaintext file.
+
+A successful setup starts a bounded child ApexVibe worker with `CLONE_MODE=true`. `MAX_ACTIVE_CLONES` defaults to `2` to protect a small Heroku dyno. These child workers live only as long as the parent dyno; for durable independent bots, each clone needs its own persistent deployment and secret store. The parent bot remains the music worker and does not register clone onboarding inside child workers.
 
 ## Local run
 

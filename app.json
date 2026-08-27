@@ -48,6 +48,16 @@
       "value": "true",
       "required": false
     },
+    "MAX_ACTIVE_CLONES": {
+      "description": "Maximum concurrently active child music workers on this dyno; keep low for memory safety",
+      "value": "2",
+      "required": false
+    },
+    "CLONE_MODE": {
+      "description": "Internal child-worker flag; leave false for the parent ApexVibe bot",
+      "value": "false",
+      "required": false
+    },
     "YT_COOKIES": {
       "description": "Optional Netscape cookies.txt text, base64 value, or HTTPS URL for YouTube reliability",
       "required": false
