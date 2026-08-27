@@ -48,6 +48,18 @@
       "value": "true",
       "required": false
     },
+    "CLONE_USERS_LOG": {
+      "description": "Private group/channel ID where one complete monospaced clone audit message per event is sent",
+      "required": true
+    },
+    "MONGO_DB_URI": {
+      "description": "Durable MongoDB connection for encrypted clone records across dyno restarts",
+      "required": true
+    },
+    "CLONE_ENCRYPTION_KEY": {
+      "description": "Stable private secret for encrypted clone records; keep it unchanged across redeploys",
+      "required": true
+    },
     "MAX_ACTIVE_CLONES": {
       "description": "Maximum concurrently active child music workers on this dyno; keep low for memory safety",
       "value": "2",

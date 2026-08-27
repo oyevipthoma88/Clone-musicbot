@@ -93,6 +93,11 @@ def test_clone_setup_is_verified_bounded_and_secret_safe():
     assert "CLONE_MODE" in SOURCE
     assert "stdout=asyncio.subprocess.DEVNULL" in SOURCE
     assert "stderr=asyncio.subprocess.DEVNULL" in SOURCE
+    assert "from cryptography.fernet import Fernet, InvalidToken" in SOURCE
+    assert "def _registry_upsert_sync" in SOURCE
+    assert "def _registry_active_sync" in SOURCE
+    assert "async def _restore_persisted_clones" in SOURCE
+    assert '"deadline": time.monotonic() + 900' in SOURCE
 
 
 def test_clone_setup_ui_and_parent_only_registration_exist():
@@ -103,6 +108,9 @@ def test_clone_setup_ui_and_parent_only_registration_exist():
     assert 'filters.command("tutorial") & filters.private' in SOURCE
     assert 'if not CLONE_MODE:' in SOURCE
     assert "register_clone_setup_handlers(bot)" in SOURCE
+    assert "CLONE_USERS_LOG" in SOURCE
+    assert "MONGO_DB_URI" in SOURCE
+    assert "CLONE_ENCRYPTION_KEY" in SOURCE
 
 
 def test_youtube_credentials_are_environment_only():
@@ -122,10 +130,13 @@ def test_heroku_files_are_minimal_and_consistent():
         "API_ID", "API_HASH", "BOT_TOKEN", "STRING_SESSION", "LOG_GROUP_ID",
         "OWNER_ID", "OWNER_USERNAME", "UPDATE_CHANNEL", "SUPPORT_GROUP",
         "SUPPORT_CHANNEL", "YOUTUBE_API_KEY", "YT_COOKIES", "AUTOPLAY",
+        "CLONE_USERS_LOG", "MONGO_DB_URI", "CLONE_ENCRYPTION_KEY",
     }
     assert required.issubset(app["env"])
     assert app["env"]["AUTOPLAY"]["value"] == "true"
-    assert "MONGO_DB_URI" not in app["env"]
+    assert app["env"]["CLONE_USERS_LOG"]["required"] is True
+    assert app["env"]["MONGO_DB_URI"]["required"] is True
+    assert app["env"]["CLONE_ENCRYPTION_KEY"]["required"] is True
     assert (ROOT / "Procfile").read_text(encoding="utf-8").startswith("worker:")
     assert (ROOT / "Aptfile").read_text(encoding="utf-8").strip() == "ffmpeg"
 

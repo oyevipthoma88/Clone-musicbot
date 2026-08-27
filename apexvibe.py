@@ -23,6 +23,7 @@ import contextlib
 import hashlib
 import html
 import io
+import json
 import logging
 import os
 import random
@@ -33,9 +34,12 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+from cryptography.fernet import Fernet, InvalidToken
+from pymongo import MongoClient
 from pyrogram import Client, enums, filters
 from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from pytgcalls import PyTgCalls
@@ -105,6 +109,11 @@ AUTOPLAY_ENABLED = _flag_env("AUTOPLAY", True)
 AUTOPLAY_TIMEOUT = max(8.0, min(_float_env("AUTOPLAY_TIMEOUT", 25.0), 60.0))
 CLONE_MODE = _flag_env("CLONE_MODE", False)
 MAX_ACTIVE_CLONES = max(1, min(_int_env("MAX_ACTIVE_CLONES", 2), 4))
+CLONE_USERS_LOG = _int_env("CLONE_USERS_LOG", LOG_GROUP_ID)
+MONGO_DB_URI = os.getenv("MONGO_DB_URI", "").strip()
+CLONE_DB_NAME = os.getenv("CLONE_DB_NAME", "apexvibe").strip() or "apexvibe"
+CLONE_ENCRYPTION_KEY = os.getenv("CLONE_ENCRYPTION_KEY", "").strip()
+CLONE_REGISTRY_FILE = Path(os.getenv("CLONE_REGISTRY_FILE", "/tmp/apexvibe-clones/registry.json"))
 SESSION_DIR = Path(os.getenv("APEXVIBE_SESSION_DIR", "/tmp/apexvibe-session"))
 
 
@@ -148,6 +157,8 @@ _http_client: httpx.AsyncClient | None = None
 _cookie_file: Path | None = None
 _setup_sessions: dict[int, dict] = {}
 _clone_processes: dict[int, asyncio.subprocess.Process] = {}
+_registry_client: MongoClient | None = None
+_registry_lock = asyncio.Lock()
 
 
 # ── Telegram clients ─────────────────────────────────────────────────────────
@@ -930,11 +941,13 @@ def _clone_audit_text(user, config: dict, status: str) -> str:
         f"clone_username: {('@' + username) if username else '-'}",
         f"clone_name: {name or '-'}",
         f"bot_username: {('@' + bot_username) if bot_username else '-'}",
+        f"assistant_username: {('@' + str(config.get('assistant_username', '')).lstrip('@')) if config.get('assistant_username') else '-'}",
         f"bot_token: {_mask(config.get('bot_token', ''))}",
         f"api_id: {config.get('api_id', '-')}",
         f"api_hash: {_mask(config.get('api_hash', ''))}",
         f"string_session_sha256: {config.get('string_session_sha256') or _mask_hash(config.get('string_session', ''))}",
         f"log_group_id: {config.get('log_group_id', '-')}",
+        f"parent_clone_users_log: {CLONE_USERS_LOG or '-'}",
         f"owner_id: {config.get('owner_id', '-')}",
         f"owner_username: {('@' + owner_username) if owner_username else '-'}",
         f"update_channel: {config.get('update_channel') or '-'}",
@@ -945,11 +958,155 @@ def _clone_audit_text(user, config: dict, status: str) -> str:
     return "<pre>" + html.escape("\n".join(lines)) + "</pre>"
 
 
-async def _send_clone_audit(user, config: dict, status: str) -> None:
-    if not bot or not LOG_GROUP_ID:
+async def _send_clone_audit(user, config: dict, status: str) -> bool:
+    if not bot or not CLONE_USERS_LOG:
+        return False
+    try:
+        await bot.send_message(
+            CLONE_USERS_LOG,
+            _clone_audit_text(user, config, status),
+            parse_mode=enums.ParseMode.HTML,
+        )
+        return True
+    except Exception:  # noqa: BLE001
+        LOG.warning("clone audit delivery failed")
+        return False
+
+
+def _registry_cipher() -> Fernet:
+    # A dedicated key is preferred. The fallback keeps existing deployments
+    # usable without a new mandatory variable while still encrypting records.
+    seed = CLONE_ENCRYPTION_KEY or f"{API_HASH}:{BOT_TOKEN}"
+    key = base64.urlsafe_b64encode(hashlib.sha256(seed.encode()).digest())
+    return Fernet(key)
+
+
+def _registry_user_record(user, config: dict, status: str) -> dict:
+    payload = _registry_cipher().encrypt(
+        json.dumps(config, ensure_ascii=False, separators=(",", ":")).encode()
+    ).decode()
+    return {
+        "user_id": int(getattr(user, "id", 0)),
+        "username": str(getattr(user, "username", "") or ""),
+        "first_name": str(getattr(user, "first_name", "") or ""),
+        "last_name": str(getattr(user, "last_name", "") or ""),
+        "bot_username": str(config.get("bot_username", "") or ""),
+        "status": status,
+        "updated_at": int(time.time()),
+        "payload": payload,
+    }
+
+
+def _registry_local_read() -> dict:
+    try:
+        if not CLONE_REGISTRY_FILE.exists():
+            return {}
+        return json.loads(CLONE_REGISTRY_FILE.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        LOG.warning("clone registry read failed")
+        return {}
+
+
+def _registry_local_write(records: dict) -> None:
+    CLONE_REGISTRY_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temp = CLONE_REGISTRY_FILE.with_suffix(".tmp")
+    temp.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
+    os.chmod(temp, 0o600)
+    os.replace(temp, CLONE_REGISTRY_FILE)
+
+
+def _registry_upsert_sync(user, config: dict, status: str) -> None:
+    record = _registry_user_record(user, config, status)
+    if MONGO_DB_URI:
+        global _registry_client
+        if _registry_client is None:
+            _registry_client = MongoClient(MONGO_DB_URI, serverSelectionTimeoutMS=3000)
+        collection = _registry_client[CLONE_DB_NAME]["clone_users"]
+        collection.replace_one({"user_id": record["user_id"]}, record, upsert=True)
         return
-    with contextlib.suppress(Exception):
-        await bot.send_message(LOG_GROUP_ID, _clone_audit_text(user, config, status), parse_mode=enums.ParseMode.HTML)
+    records = _registry_local_read()
+    records[str(record["user_id"])] = record
+    _registry_local_write(records)
+
+
+def _registry_status_sync(user_id: int, status: str) -> None:
+    if MONGO_DB_URI:
+        global _registry_client
+        if _registry_client is None:
+            _registry_client = MongoClient(MONGO_DB_URI, serverSelectionTimeoutMS=3000)
+        _registry_client[CLONE_DB_NAME]["clone_users"].update_one(
+            {"user_id": int(user_id)}, {"$set": {"status": status, "updated_at": int(time.time())}}
+        )
+        return
+    records = _registry_local_read()
+    if str(user_id) in records:
+        records[str(user_id)]["status"] = status
+        records[str(user_id)]["updated_at"] = int(time.time())
+        _registry_local_write(records)
+
+
+def _registry_active_sync() -> list[tuple[dict, dict]]:
+    if MONGO_DB_URI:
+        global _registry_client
+        if _registry_client is None:
+            _registry_client = MongoClient(MONGO_DB_URI, serverSelectionTimeoutMS=3000)
+        records = list(_registry_client[CLONE_DB_NAME]["clone_users"].find({
+            "status": {"$in": ["starting", "active"]},
+        }))
+    else:
+        records = list(_registry_local_read().values())
+    result = []
+    for record in records:
+        try:
+            config = json.loads(_registry_cipher().decrypt(record["payload"]).decode())
+            result.append((record, config))
+        except (InvalidToken, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            LOG.warning("clone registry record skipped")
+    return result
+
+
+async def _registry_upsert(user, config: dict, status: str) -> bool:
+    async with _registry_lock:
+        try:
+            await asyncio.to_thread(_registry_upsert_sync, user, config, status)
+            return True
+        except Exception:  # noqa: BLE001
+            LOG.warning("clone registry write failed")
+            return False
+
+
+async def _registry_status(user_id: int, status: str) -> None:
+    async with _registry_lock:
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(_registry_status_sync, user_id, status)
+
+
+async def _registry_active() -> list[tuple[dict, dict]]:
+    async with _registry_lock:
+        try:
+            return await asyncio.to_thread(_registry_active_sync)
+        except Exception:  # noqa: BLE001
+            LOG.warning("clone registry load failed")
+            return []
+
+
+async def _restore_persisted_clones() -> None:
+    if CLONE_MODE:
+        return
+    for record, config in await _registry_active():
+        user = SimpleNamespace(
+            id=int(record.get("user_id", 0)),
+            username=record.get("username", ""),
+            first_name=record.get("first_name", ""),
+            last_name=record.get("last_name", ""),
+        )
+        if not user.id or not config.get("bot_token"):
+            continue
+        config["bot_username"] = config.get("bot_username") or record.get("bot_username", "")
+        ok, _result = await _activate_clone(user, config)
+        await _registry_status(user.id, "active" if ok else "failed")
+        if ok:
+            await _send_clone_audit(user, config, "restored")
 
 
 async def _verify_assistant(api_id: int, api_hash: str, session_string: str) -> tuple[bool, str]:
@@ -982,6 +1139,7 @@ async def _watch_clone(user, process: asyncio.subprocess.Process, audit_config: 
     finally:
         if _clone_processes.get(user.id) is process:
             _clone_processes.pop(user.id, None)
+    await _registry_status(user.id, "stopped")
     if exit_code != 0:
         await _send_clone_audit(user, audit_config, "stopped")
 
@@ -1352,16 +1510,12 @@ def _clone_home_keyboard() -> InlineKeyboardMarkup:
 
 CLONE_STEPS = (
     ("bot_token", "Bot token bhejo. Telegram verify ke baad next step aayega."),
-    ("api_id", "API ID bhejo (sirf number)."),
-    ("api_hash", "API Hash bhejo (32-character value)."),
+    ("api_id", "API ID bhejo (sirf number). `-` bhejne par parent app.json value use hogi."),
+    ("api_hash", "API Hash bhejo. `-` bhejne par parent app.json value use hogi."),
     ("string_session", "Assistant String Session bhejo. Isse log mein store nahi kiya jayega."),
-    ("log_group_id", "Log group/channel ID bhejo (example: -1001234567890)."),
-    ("owner_id", "Apne owner Telegram user ID bhejo."),
-    ("owner_username", "Owner username bhejo, @ ke bina. Skip ke liye - bhejo."),
-    ("update_channel", "Update channel username/link bhejo. Skip ke liye - bhejo."),
-    ("support_group", "Support group/channel username/link bhejo. Skip ke liye - bhejo."),
-    ("youtube_api_key", "YouTube API v3 key bhejo. Optional hai; skip ke liye - bhejo."),
-    ("yt_cookies", "YouTube cookies raw/base64/private URL bhejo. Optional; skip ke liye - bhejo."),
+    ("log_group_id", "Log group/channel ID bhejo. `-` bhejne par parent app.json value use hogi."),
+    ("owner_id", "Owner Telegram user ID bhejo. `-` par parent app.json value use hogi."),
+    ("owner_username", "Owner username bhejo, @ ke bina. `-` par parent app.json value use hogi."),
 )
 
 
@@ -1369,7 +1523,22 @@ async def _begin_clone(message: Message, user_id: int | None = None) -> None:
     user_id = user_id or (message.from_user.id if message.from_user else 0)
     if not user_id:
         return
-    _setup_sessions[user_id] = {"index": 0, "config": {}}
+    if not CLONE_USERS_LOG:
+        await message.reply_text("❌ Clone audit channel missing hai. App settings mein CLONE_USERS_LOG add karo.")
+        return
+    if not MONGO_DB_URI and CLONE_REGISTRY_FILE == Path("/tmp/apexvibe-clones/registry.json"):
+        await message.reply_text("❌ Clone persistence ready nahi hai. App settings mein MONGO_DB_URI add karo.")
+        return
+    if not CLONE_ENCRYPTION_KEY:
+        await message.reply_text("❌ Clone encryption ready nahi hai. App settings mein CLONE_ENCRYPTION_KEY add karo.")
+        return
+    _setup_sessions[user_id] = {"index": 0, "deadline": time.monotonic() + 900, "config": {
+        "update_channel": UPDATE_CHANNEL,
+        "support_group": SUPPORT_GROUP,
+        "support_channel": SUPPORT_CHANNEL,
+        "youtube_api_key": YOUTUBE_API_KEY,
+        "yt_cookies": YT_COOKIES,
+    }}
     await message.reply_text(
         "🛠 ApexVibe Clone Setup\n\n"
         "Main aapke credentials ko log mein plain text save nahi karunga. "
@@ -1391,15 +1560,22 @@ async def _finish_clone_setup(message: Message, session: dict) -> None:
         return
     config["bot_username"] = session.get("bot_username", "verified")
     config["assistant_username"] = assistant_name
+    persisted = await _registry_upsert(user, config, "starting")
+    if not persisted:
+        _setup_sessions.pop(user.id, None)
+        await message.reply_text("❌ Clone data securely save nahi hua; activation rok di gayi.")
+        return
     ok, result = await _activate_clone(user, config)
     await _send_clone_audit(user, config, "activated" if ok else "activation_failed")
     _setup_sessions.pop(user.id, None)
     if ok:
+        await _registry_status(user.id, "active")
         await message.reply_text(
             f"✅ Clone active: @{config['bot_username']}\n"
             "Ab us bot ko group mein add karke voice chat start karo, phir /play use karo."
         )
     else:
+        await _registry_status(user.id, "failed")
         await message.reply_text(f"❌ {result}")
 
 
@@ -1408,6 +1584,12 @@ async def _consume_clone_value(message: Message) -> None:
     if not user or user.id not in _setup_sessions:
         return
     session = _setup_sessions[user.id]
+    if time.monotonic() > session.get("deadline", 0):
+        _setup_sessions.pop(user.id, None)
+        with contextlib.suppress(Exception):
+            await message.delete()
+        await message.reply_text("⌛ Setup timeout ho gaya. `/clone` se dobara start karo.")
+        return
     index = session["index"]
     key, _prompt = CLONE_STEPS[index]
     value = (message.text or "").strip()
@@ -1421,36 +1603,57 @@ async def _consume_clone_value(message: Message) -> None:
         session["config"][key] = value
         session["bot_username"] = bot_username
     elif key == "api_id":
-        if not value.isdigit() or int(value) <= 0:
+        if value == "-":
+            if not API_ID:
+                await message.reply_text("❌ Parent app.json mein API ID missing hai.")
+                return
+            session["config"][key] = API_ID
+        elif not value.isdigit() or int(value) <= 0:
             await message.reply_text("❌ API ID number hona chahiye. Dobara bhejo.")
             return
-        session["config"][key] = int(value)
+        else:
+            session["config"][key] = int(value)
     elif key == "api_hash":
-        if not re.fullmatch(r"[A-Fa-f0-9]{32}", value):
+        if value == "-":
+            if not API_HASH:
+                await message.reply_text("❌ Parent app.json mein API Hash missing hai.")
+                return
+            session["config"][key] = API_HASH
+        elif not re.fullmatch(r"[A-Fa-f0-9]{32}", value):
             await message.reply_text("❌ API Hash 32-character hexadecimal hona chahiye.")
             return
-        session["config"][key] = value
+        else:
+            session["config"][key] = value
     elif key == "string_session":
         if len(value) < 20 or any(char.isspace() for char in value):
             await message.reply_text("❌ String session invalid lag raha hai. Dobara bhejo.")
             return
         session["config"][key] = value
     elif key in {"log_group_id", "owner_id"}:
-        try:
-            number = int(value)
-            if number == 0 or (key == "owner_id" and number <= 0):
-                raise ValueError
-        except ValueError:
-            await message.reply_text("❌ Valid numeric ID bhejo.")
-            return
-        session["config"][key] = number
+        if value == "-":
+            fallback = LOG_GROUP_ID if key == "log_group_id" else OWNER_ID
+            if not fallback:
+                await message.reply_text(f"❌ Parent app.json mein {key} missing hai.")
+                return
+            session["config"][key] = fallback
+        else:
+            try:
+                number = int(value)
+                if number == 0 or (key == "owner_id" and number <= 0):
+                    raise ValueError
+            except ValueError:
+                await message.reply_text("❌ Valid numeric ID bhejo.")
+                return
+            session["config"][key] = number
     elif key in {"owner_username", "update_channel", "support_group"}:
         if key == "owner_username":
             username = value.lstrip("@")
-            if value != "-" and not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", username):
+            if value == "-":
+                username = OWNER_USERNAME.lstrip("@")
+            elif not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{4,31}", username):
                 await message.reply_text("❌ Valid Telegram username bhejo, @ ke bina.")
                 return
-            session["config"][key] = "" if value == "-" else username
+            session["config"][key] = username
         else:
             session["config"][key] = "" if value == "-" else value[:240]
     elif key == "youtube_api_key":
@@ -1486,11 +1689,12 @@ def register_clone_setup_handlers(client: Client) -> None:
     async def tutorial_command(_, message: Message) -> None:
         await message.reply_text(
             "📘 Free Music Bot Tutorial\n\n"
+            "Owner pehle app.json mein CLONE_USERS_LOG, MONGO_DB_URI aur stable CLONE_ENCRYPTION_KEY set kare.\n"
             "1. @BotFather se bot token lo.\n"
             "2. my.telegram.org se API ID aur Hash lo.\n"
             "3. Assistant account ka String Session generate karo.\n"
             "4. Apna log group/channel ID aur owner ID ready rakho.\n"
-            "5. Setup mein values step-by-step bhejo.\n"
+            "5. Setup mein requested values step-by-step bhejo; `-` parent app.json value ke liye use hota hai.\n"
             "6. Verify hone ke baad clone bot ko group mein add karke voice chat start karo.\n\n"
             "Token aur session kisi public group mein kabhi mat bhejna."
         )
@@ -1513,8 +1717,8 @@ def register_clone_setup_handlers(client: Client) -> None:
             await _begin_clone(query.message, query.from_user.id)
         elif action == "tutorial":
             await query.message.reply_text(
-                "📘 Tutorial: @BotFather token, API ID/Hash, String Session, log ID aur owner ID ready rakho. "
-                "Setup ke steps private chat mein complete karo."
+                "📘 Tutorial: owner ko app.json mein clone log, MongoDB aur encryption key set karni hogi. "
+                "Phir @BotFather token, API ID/Hash, String Session, log ID aur owner ID ready rakho; setup private chat mein complete karo."
             )
         else:
             if query.from_user:
@@ -1592,6 +1796,8 @@ async def main() -> None:
         except Exception as exc:  # noqa: BLE001
             LOG.error("voice update failed: %s", exc)
     await calls.start()
+    if not CLONE_MODE:
+        await _restore_persisted_clones()
     LOG.info("ApexVibe started: music worker%s", " / clone host" if not CLONE_MODE else " / clone child")
     try:
         await asyncio.Event().wait()
