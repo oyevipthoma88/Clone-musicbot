@@ -20,11 +20,18 @@ def test_only_play_and_skip_are_registered():
         if not isinstance(node, ast.Call):
             continue
         if isinstance(node.func, ast.Attribute) and node.func.attr == "command":
-            if node.args and isinstance(node.args[0], ast.Constant):
-                commands.append(node.args[0].value)
-    assert sorted(commands) == ["play", "skip"]
+            if not node.args:
+                continue
+            arg = node.args[0]
+            if isinstance(arg, ast.Constant):
+                commands.append(arg.value)
+            elif isinstance(arg, (ast.List, ast.Tuple)):
+                commands.extend(item.value for item in arg.elts if isinstance(item, ast.Constant))
+    assert "play" in commands and "skip" in commands
+    assert {"pause", "resume", "stop", "queue", "volume", "seek", "speed"}.issubset(commands)
     assert 'filters.command("autoplay")' not in SOURCE
     assert "AsyncIOMotorGridFSBucket" not in SOURCE
+    assert "calls.stop()" not in SOURCE
 
 
 def test_playback_has_generation_fences_and_single_download_gate():

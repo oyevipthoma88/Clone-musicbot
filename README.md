@@ -1,11 +1,10 @@
 # ApexVibe Music Bot
 
-ApexVibe is a deliberately small Telegram voice-chat music bot. It exposes only two public commands:
+ApexVibe is a deliberately small Telegram voice-chat music bot. It contains only music features and essential playback controls:
 
-- `/play <song name or YouTube URL>`
-- `/skip`
+`/play`, `/vplay`, `/cplay`, `/playforce`, `/vplayforce`, `/cvplay`, `/skip`, `/pause`, `/resume`, `/stop`, `/queue`, `/now`, `/clearqueue`, `/remove`, `/shuffle`, `/loop`, `/loopall`, `/noloop`, `/volume`, `/seek`, `/seekback`, `/rewind`, `/speed`, `/search`, `/playlist`, `/song`, `/download`, and `/help`.
 
-The runtime contains no autoplay, playlist scanner, social commands, admin suite, startup recovery, MongoDB/GridFS, or unrelated plugins. That keeps the command dispatcher, memory footprint, and playback state easy to reason about on a small Heroku worker.
+The runtime contains no autoplay, social commands, general administration suite, startup recovery, MongoDB/GridFS, or unrelated plugins. That keeps the command dispatcher, memory footprint, and playback state easy to reason about on a small Heroku worker.
 
 ## Deploy to Heroku
 
@@ -47,7 +46,7 @@ python apexvibe.py
 
 ## Design references
 
-The implementation was informed by publicly available patterns in current Python/Pyrogram/PyTgCalls music bots, but the code here is a fresh minimal implementation rather than a wholesale copy:
+The implementation was informed by publicly available patterns in current Python/Pyrogram/PyTgCalls music bots, and the original Melody_music music layer was selectively ported and simplified rather than carrying over unrelated plugins:
 
 - [HasiiMusicBot](https://github.com/hasindu-nagolla/HasiiMusicBot) — Pyrogram/PyTgCalls/FFmpeg baseline and environment-based deployment.
 - [ShrutiMusic](https://github.com/NoxxOP/ShrutiMusic) — Heroku template structure and direct YouTube search/play flow.

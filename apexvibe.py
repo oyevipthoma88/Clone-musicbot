@@ -1,6 +1,6 @@
 """ApexVibe: a small Telegram voice-chat music bot.
 
-Only two public commands are registered: /play and /skip.
+The public command set covers playback, queue, and essential music controls; no unrelated social or administration plugins are registered.
 The playback path is intentionally narrow:
 
 1. YouTube Data API v3 or yt-dlp resolves one result.
@@ -10,6 +10,10 @@ The playback path is intentionally narrow:
 
 No autoplay, startup recovery, GridFS, peer warm-up, social plugins, or large
 background scans are included. Secrets are read only from environment variables.
+
+Music commands include /play, /vplay, /cplay, /playforce, /skip, /pause,
+/resume, /stop, /queue, /now, /clearqueue, /remove, /shuffle, /loop,
+/volume, /seek, /speed, /search, /playlist, /song, and /help.
 """
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ import base64
 import contextlib
 import logging
 import os
+import random
 import re
 import time
 from collections import deque
@@ -104,6 +109,10 @@ class ChatState:
     control_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     stream_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     started_at: float = 0.0
+    loop_mode: str = "off"
+    volume: int = 100
+    speed: float = 1.0
+    paused: bool = False
 
 
 states: dict[int, ChatState] = {}
@@ -293,6 +302,18 @@ async def _api_search(query: str) -> Track | None:
     return Track(video_id, snippet.get("title") or "YouTube audio", _yt_url(video_id))
 
 
+def _track_from_entry(entry: dict) -> Track | None:
+    video_id = entry.get("id")
+    if not YOUTUBE_ID_RE.fullmatch(video_id or ""):
+        return None
+    return Track(
+        video_id=video_id,
+        title=(entry.get("title") or "YouTube track")[:180],
+        webpage_url=entry.get("webpage_url") or _yt_url(video_id),
+        duration=int(entry.get("duration") or 0),
+    )
+
+
 async def find_track(query: str) -> Track | None:
     video_id = _youtube_id(query)
     if video_id:
@@ -318,12 +339,41 @@ async def find_track(query: str) -> Track | None:
     video_id = entry.get("id")
     if not YOUTUBE_ID_RE.fullmatch(video_id or ""):
         return None
-    return Track(
-        video_id=video_id,
-        title=(entry.get("title") or "YouTube track")[:180],
-        webpage_url=entry.get("webpage_url") or _yt_url(video_id),
-        duration=int(entry.get("duration") or 0),
-    )
+    return _track_from_entry(entry)
+
+
+def _playlist_sync(url: str) -> dict:
+    from yt_dlp import YoutubeDL
+
+    options = _ydl_options()
+    options["extract_flat"] = "in_playlist"
+    options["playlistend"] = 20
+    if _cookie_file and _cookie_file.is_file():
+        options["cookiefile"] = str(_cookie_file)
+    with YoutubeDL(options) as ydl:
+        return ydl.extract_info(url, download=False)
+
+
+async def find_tracks(query: str, limit: int = 10) -> list[Track]:
+    """Resolve a playlist URL or return a single search result."""
+    parsed = urlparse(query)
+    has_playlist = bool(parse_qs(parsed.query).get("list"))
+    if not has_playlist:
+        one = await find_track(query)
+        return [one] if one else []
+    try:
+        info = await asyncio.wait_for(
+            asyncio.to_thread(_playlist_sync, query), timeout=25
+        )
+    except Exception as exc:  # noqa: BLE001
+        LOG.warning("playlist resolve failed: %s", exc)
+        return []
+    tracks = []
+    for entry in (info.get("entries") or [])[:limit]:
+        track = _track_from_entry(entry or {})
+        if track:
+            tracks.append(track)
+    return tracks
 
 
 def _cache_files() -> list[Path]:
@@ -436,15 +486,20 @@ def _audio_quality():
     return getattr(AudioQuality, "HIGH_QUALITY", None) or getattr(AudioQuality, "STUDIO", None)
 
 
-def _stream(source: str) -> MediaStream:
+def _stream(source: str, *, seek: int = 0, speed: float = 1.0) -> MediaStream:
     kwargs = {"video_flags": MediaStream.Flags.IGNORE}
     quality = _audio_quality()
     if quality is not None:
         kwargs["audio_parameters"] = quality
+    params = []
     if source.startswith(("http://", "https://")):
-        kwargs["ffmpeg_parameters"] = (
-            "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
-        )
+        params.extend(["-reconnect 1", "-reconnect_streamed 1", "-reconnect_delay_max 5"])
+    if seek > 0:
+        params.append(f"-ss {int(seek)}")
+    if abs(speed - 1.0) > 0.01:
+        params.append(f"-filter:a atempo={max(0.5, min(speed, 2.0)):.2f}")
+    if params:
+        kwargs["ffmpeg_parameters"] = " ".join(params)
     return MediaStream(source, **kwargs)
 
 
@@ -452,11 +507,11 @@ def _is_current(chat_id: int, generation: int) -> bool:
     return _state(chat_id).generation == generation
 
 
-async def _play_source(chat_id: int, source: str, timeout: float) -> bool:
+async def _play_source(chat_id: int, source: str, timeout: float, *, seek: int = 0, speed: float = 1.0) -> bool:
     if calls is None:
         return False
     try:
-        await asyncio.wait_for(calls.play(chat_id, _stream(source)), timeout=timeout)
+        await asyncio.wait_for(calls.play(chat_id, _stream(source, seek=seek, speed=speed)), timeout=timeout)
         return True
     except asyncio.CancelledError:
         raise
@@ -465,8 +520,9 @@ async def _play_source(chat_id: int, source: str, timeout: float) -> bool:
         return False
 
 
-async def _play_track(chat_id: int, track: Track, generation: int) -> bool:
+async def _play_track(chat_id: int, track: Track, generation: int, *, seek: int = 0) -> bool:
     state = _state(chat_id)
+    speed = state.speed
     if not _is_current(chat_id, generation):
         return False
     if track.local_path:
@@ -478,7 +534,7 @@ async def _play_track(chat_id: int, track: Track, generation: int) -> bool:
             return False
         source = direct.source if direct else None
         timeout = DIRECT_TIMEOUT
-    if source and await _play_source(chat_id, source, timeout):
+    if source and await _play_source(chat_id, source, timeout, seek=seek, speed=speed):
         if _is_current(chat_id, generation):
             state.current = track
             state.started_at = time.monotonic()
@@ -490,7 +546,7 @@ async def _play_track(chat_id: int, track: Track, generation: int) -> bool:
     if not path or not _is_current(chat_id, generation):
         return False
     track.local_path = str(path)
-    if not await _play_source(chat_id, track.local_path, LOCAL_TIMEOUT):
+    if not await _play_source(chat_id, track.local_path, LOCAL_TIMEOUT, seek=seek, speed=speed):
         return False
     if _is_current(chat_id, generation):
         state.current = track
@@ -565,56 +621,344 @@ async def _skip(chat_id: int) -> None:
         await _start_next(chat_id)
 
 
+# ── Music controls ───────────────────────────────────────────────────────────
+def _format_time(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
+
+
+def _parse_time(value: str) -> int | None:
+    value = value.strip().lower()
+    if not value:
+        return None
+    try:
+        if ":" in value:
+            parts = [int(part) for part in value.split(":")]
+            if len(parts) == 2:
+                return max(0, parts[0] * 60 + parts[1])
+            if len(parts) == 3:
+                return max(0, parts[0] * 3600 + parts[1] * 60 + parts[2])
+        match = re.fullmatch(r"(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?", value)
+        if match and any(match.groups()):
+            hours, minutes, seconds = (int(item or 0) for item in match.groups())
+            return hours * 3600 + minutes * 60 + seconds
+        return max(0, int(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+async def _control(method: str, chat_id: int, *args) -> bool:
+    if calls is None:
+        return False
+    function = getattr(calls, method, None)
+    if function is None:
+        return False
+    try:
+        result = await asyncio.wait_for(function(chat_id, *args), timeout=CONTROL_TIMEOUT)
+        return result is not False
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        LOG.info("control %s failed in %s: %s", method, chat_id, exc)
+        return False
+
+
+async def _stop_current_only(chat_id: int) -> None:
+    state = _state(chat_id)
+    async with state.control_lock:
+        state.generation += 1
+        old_task = state.play_task
+        state.play_task = None
+        state.current = None
+        state.started_at = 0.0
+        if old_task and not old_task.done():
+            old_task.cancel()
+    if old_task and not old_task.done():
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await old_task
+    await _leave(chat_id)
+
+
+async def _restart_current(chat_id: int, *, seek: int | None = None) -> bool:
+    state = _state(chat_id)
+    async with state.control_lock:
+        track = state.current
+        if not track:
+            return False
+        state.generation += 1
+        generation = state.generation
+        old_task = state.play_task
+        if old_task and not old_task.done():
+            old_task.cancel()
+        state.play_task = asyncio.create_task(
+            _play_track(chat_id, track, generation, seek=max(0, seek or 0)),
+            name=f"restart-{chat_id}-{generation}",
+        )
+        task = state.play_task
+    if old_task and not old_task.done():
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await old_task
+    try:
+        result = await task
+    except asyncio.CancelledError:
+        return False
+    finally:
+        async with state.control_lock:
+            if state.play_task is task:
+                state.play_task = None
+    return bool(result)
+
+
+async def _edit(message: Message, text: str) -> None:
+    with contextlib.suppress(Exception):
+        await message.edit_text(text)
+
+
 # ── Bot commands ─────────────────────────────────────────────────────────────
+def _queue_text(state: ChatState) -> str:
+    lines = [f"🎵 Current: {state.current.title}" if state.current else "🎵 Nothing is playing"]
+    if state.queue:
+        lines.append("\n".join(f"{index}. {track.title}" for index, track in enumerate(state.queue, 1)))
+    else:
+        lines.append("Queue empty")
+    return "\n".join(lines)[:3900]
+
+
+async def _play_requested(message: Message, query: str, *, force: bool = False) -> None:
+    chat_id = message.chat.id
+    status = await message.reply_text("🔎 Searching…")
+    tracks = await find_tracks(query, limit=10 if "list=" in query else 1)
+    if not tracks:
+        await _edit(status, "❌ Song nahi mila.")
+        return
+    if force:
+        await _stop_current_only(chat_id)
+        state = _state(chat_id)
+        async with state.control_lock:
+            state.queue.clear()
+    state = _state(chat_id)
+    async with state.control_lock:
+        busy = bool(state.current or (state.play_task and not state.play_task.done()))
+        if busy:
+            state.queue.extend(tracks)
+            queued = True
+        else:
+            first, *rest = tracks
+            state.queue.extend(rest)
+            state.generation += 1
+            generation = state.generation
+            state.current = first
+            state.play_task = asyncio.create_task(
+                _play_track(chat_id, first, generation),
+                name=f"play-{chat_id}-{generation}",
+            )
+            task = state.play_task
+            queued = False
+    if queued:
+        await _edit(status, f"➕ {len(tracks)} track(s) queue mein add.")
+        return
+    await _edit(status, f"▶️ Starting: {tracks[0].title}")
+    try:
+        ok = await task
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:  # noqa: BLE001
+        LOG.error("play command failed: %s", exc)
+        ok = False
+    error_text = None
+    async with state.control_lock:
+        if state.generation == generation:
+            state.play_task = None
+            if not ok:
+                state.current = None
+                state.started_at = 0.0
+                error_text = "❌ Playback start nahi ho paya."
+                if state.queue:
+                    _spawn(_start_next(chat_id), f"next-after-play-failure-{chat_id}")
+            else:
+                error_text = None
+        else:
+            error_text = None
+    if error_text:
+        await _edit(status, error_text)
+
+
 def register_handlers(client: Client) -> None:
-    @client.on_message(filters.command("play") & filters.group)
+    @client.on_message(filters.command(["play", "vplay", "cplay", "playforce", "vplayforce", "cvplay"]) & filters.group)
     async def play_command(_, message: Message) -> None:
         query = " ".join(message.command[1:]).strip() if message.command else ""
         if not query:
             await message.reply_text("Usage: /play song name or YouTube link")
             return
-        status = await message.reply_text("🔎 Searching…")
-        track = await find_track(query)
-        if not track:
-            await status.edit_text("❌ Song nahi mila.")
-            return
-        state = _state(message.chat.id)
-        async with state.control_lock:
-            if state.current or (state.play_task and not state.play_task.done()):
-                state.queue.append(track)
-                queued = True
-            else:
-                state.generation += 1
-                generation = state.generation
-                state.current = track
-                state.play_task = asyncio.create_task(
-                    _play_track(message.chat.id, track, generation),
-                    name=f"play-{message.chat.id}-{generation}",
-                )
-                queued = False
-                task = state.play_task
-        if queued:
-            await status.edit_text(f"➕ Queue mein add: {track.title}")
-            return
-        await status.edit_text(f"▶️ Starting: {track.title}")
-        try:
-            ok = await task
-        except asyncio.CancelledError:
-            return
-        except Exception as exc:  # noqa: BLE001
-            LOG.error("play command failed: %s", exc)
-            ok = False
-        async with state.control_lock:
-            if state.generation == generation:
-                state.play_task = None
-                if not ok:
-                    state.current = None
-                    await status.edit_text("❌ Playback start nahi ho paya.")
+        command = message.command[0].lower() if message.command else "play"
+        await _play_requested(message, query, force=command.endswith("force"))
 
     @client.on_message(filters.command("skip") & filters.group)
     async def skip_command(_, message: Message) -> None:
         await message.reply_text("⏭ Skipping…")
         _spawn(_skip(message.chat.id), f"skip-{message.chat.id}")
+
+    @client.on_message(filters.command(["pause", "resume", "stop", "mute", "unmute"]) & filters.group)
+    async def basic_control(_, message: Message) -> None:
+        command = message.command[0].lower()
+        if command == "stop":
+            state = _state(message.chat.id)
+            async with state.control_lock:
+                state.queue.clear()
+            await message.reply_text("⏹ Stopping…")
+            _spawn(_stop_current_only(message.chat.id), f"stop-{message.chat.id}")
+            return
+        method = command
+        ok = await _control(method, message.chat.id)
+        state = _state(message.chat.id)
+        if ok and command == "pause":
+            state.paused = True
+        elif ok and command == "resume":
+            state.paused = False
+        await message.reply_text(("✅ " if ok else "❌ ") + command.capitalize())
+
+    @client.on_message(filters.command(["queue", "now", "nowplaying"]) & filters.group)
+    async def queue_command(_, message: Message) -> None:
+        state = _state(message.chat.id)
+        if message.command[0].lower() == "now":
+            text = state.current.title if state.current else "Nothing is playing."
+        else:
+            text = _queue_text(state)
+        await message.reply_text(text)
+
+    @client.on_message(filters.command(["clearqueue", "clear"]) & filters.group)
+    async def clear_queue_command(_, message: Message) -> None:
+        state = _state(message.chat.id)
+        async with state.control_lock:
+            state.queue.clear()
+        await message.reply_text("🗑 Queue cleared.")
+
+    @client.on_message(filters.command("remove") & filters.group)
+    async def remove_command(_, message: Message) -> None:
+        try:
+            index = int(message.command[1]) - 1
+        except (IndexError, TypeError, ValueError):
+            await message.reply_text("Usage: /remove number")
+            return
+        state = _state(message.chat.id)
+        async with state.control_lock:
+            if index < 0 or index >= len(state.queue):
+                text = "❌ Queue item nahi mila."
+            else:
+                removed = state.queue[index]
+                del state.queue[index]
+                text = f"🗑 Removed: {removed.title}"
+        await message.reply_text(text)
+
+    @client.on_message(filters.command("shuffle") & filters.group)
+    async def shuffle_command(_, message: Message) -> None:
+        state = _state(message.chat.id)
+        async with state.control_lock:
+            items = list(state.queue)
+            random.shuffle(items)
+            state.queue = deque(items)
+        await message.reply_text("🔀 Queue shuffled.")
+
+    @client.on_message(filters.command(["loop", "loopall", "noloop"]) & filters.group)
+    async def loop_command(_, message: Message) -> None:
+        command = message.command[0].lower()
+        state = _state(message.chat.id)
+        if command == "loopall":
+            state.loop_mode = "all"
+        elif command == "noloop":
+            state.loop_mode = "off"
+        else:
+            value = message.command[1].lower() if len(message.command) > 1 else "one"
+            state.loop_mode = value if value in {"one", "all", "off"} else "one"
+        await message.reply_text(f"🔁 Loop: {state.loop_mode}")
+
+    @client.on_message(filters.command("volume") & filters.group)
+    async def volume_command(_, message: Message) -> None:
+        try:
+            volume = max(1, min(200, int(message.command[1])))
+        except (IndexError, TypeError, ValueError):
+            await message.reply_text("Usage: /volume 1-200")
+            return
+        ok = await _control("change_volume_call", message.chat.id, volume)
+        if ok:
+            _state(message.chat.id).volume = volume
+        await message.reply_text(("🔊 Volume: " if ok else "❌ Volume change failed.") + (str(volume) if ok else ""))
+
+    @client.on_message(filters.command("search") & filters.group)
+    async def search_command(_, message: Message) -> None:
+        query = " ".join(message.command[1:]).strip()
+        track = await find_track(query) if query else None
+        await message.reply_text(
+            f"🔎 {track.title}\n{track.webpage_url}" if track else "❌ Song nahi mila."
+        )
+
+    @client.on_message(filters.command("playlist") & filters.group)
+    async def playlist_command(_, message: Message) -> None:
+        query = " ".join(message.command[1:]).strip()
+        if not query:
+            await message.reply_text("Usage: /playlist YouTube playlist URL")
+            return
+        await _play_requested(message, query)
+
+    @client.on_message(filters.command(["seek", "seekback", "rewind"]) & filters.group)
+    async def seek_command(_, message: Message) -> None:
+        state = _state(message.chat.id)
+        if not state.current:
+            await message.reply_text("❌ Nothing is playing.")
+            return
+        requested = _parse_time(message.command[1]) if len(message.command) > 1 else None
+        if requested is None:
+            await message.reply_text("Usage: /seek 1:30")
+            return
+        if message.command[0].lower() in {"seekback", "rewind"}:
+            requested = max(0, int(time.monotonic() - state.started_at) - requested)
+        requested = min(requested, state.current.duration - 1) if state.current.duration > 1 else requested
+        ok = await _restart_current(message.chat.id, seek=requested)
+        await message.reply_text(("⏩ Seeked to " if ok else "❌ Seek failed. ") + (_format_time(requested) if ok else ""))
+
+    @client.on_message(filters.command("speed") & filters.group)
+    async def speed_command(_, message: Message) -> None:
+        try:
+            speed = max(0.5, min(2.0, float(message.command[1])))
+        except (IndexError, TypeError, ValueError):
+            await message.reply_text("Usage: /speed 0.5-2.0")
+            return
+        state = _state(message.chat.id)
+        if not state.current:
+            await message.reply_text("❌ Nothing is playing.")
+            return
+        elapsed = max(0, int(time.monotonic() - state.started_at))
+        state.speed = speed
+        ok = await _restart_current(message.chat.id, seek=elapsed)
+        await message.reply_text((f"⏩ Speed: {speed:.2f}x" if ok else "❌ Speed change failed."))
+
+    @client.on_message(filters.command(["song", "download"]) & filters.group)
+    async def download_command(_, message: Message) -> None:
+        query = " ".join(message.command[1:]).strip()
+        track = await find_track(query) if query else None
+        if not track:
+            await message.reply_text("❌ Song nahi mila.")
+            return
+        path = await download_track(track)
+        if not path:
+            await message.reply_text("❌ Download failed.")
+            return
+        await message.reply_audio(str(path), title=track.title, caption="ApexVibe")
+
+    @client.on_message(filters.command("help") & filters.group)
+    async def help_command(_, message: Message) -> None:
+        await message.reply_text(
+            "🎵 ApexVibe commands:\n"
+            "/play /vplay /cplay — play or queue\n"
+            "/playforce — replace current track\n"
+            "/skip /pause /resume /stop\n"
+            "/queue /now /clearqueue /remove /shuffle\n"
+            "/loop /loopall /noloop /volume\n"
+            "/seek /seekback /rewind /speed\n"
+            "/search /playlist /song"
+        )
 
 
 async def on_stream_update(_, update) -> None:
@@ -639,6 +983,11 @@ async def on_stream_update(_, update) -> None:
         # Ignore an end belonging to an already superseded operation.
         if state.play_task and not state.play_task.done():
             return
+        finished = state.current
+        if finished and state.loop_mode == "one":
+            state.queue.appendleft(finished)
+        elif finished and state.loop_mode == "all":
+            state.queue.append(finished)
         state.current = None
         state.started_at = 0.0
         state.play_task = None
