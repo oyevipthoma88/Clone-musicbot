@@ -49,11 +49,7 @@
       "required": false
     },
     "YT_COOKIES": {
-      "description": "Optional Netscape cookies.txt contents or base64 value for YouTube reliability",
-      "required": false
-    },
-    "COOKIE_URL": {
-      "description": "Optional private raw cookies.txt URL; use YT_COOKIES instead when possible",
+      "description": "Optional Netscape cookies.txt text, base64 value, or HTTPS URL for YouTube reliability",
       "required": false
     },
     "YOUTUBE_API_KEY": {

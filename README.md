@@ -27,8 +27,7 @@ The worker requires:
 | `SUPPORT_GROUP` | No | Support group username or link |
 | `SUPPORT_CHANNEL` | No | Support channel username or link |
 | `AUTOPLAY` | No | Related-track autoplay when the queue is empty; default `true` |
-| `YT_COOKIES` | No | Netscape `cookies.txt` text or base64 value |
-| `COOKIE_URL` | No | Private raw cookies URL, used only when `YT_COOKIES` is empty |
+| `YT_COOKIES` | No | Netscape `cookies.txt` text, base64 value, or private HTTPS URL |
 | `YOUTUBE_API_KEY` | No | YouTube Data API v3 key for fast search |
 
 The assistant account and the bot must be members of the group. The assistant needs permission to join/manage the voice chat, and a voice chat must be active before `/play` can stream.

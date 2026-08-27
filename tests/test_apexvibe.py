@@ -72,6 +72,7 @@ def test_youtube_credentials_are_environment_only():
     assert 'os.getenv("BOT_TOKEN"' in SOURCE
     assert 'os.getenv("STRING_SESSION"' in SOURCE
     assert 'os.getenv("YT_COOKIES"' in SOURCE
+    assert 'os.getenv("COOKIE_URL"' not in SOURCE
     assert 'os.getenv("YOUTUBE_API_KEY"' in SOURCE
     assert "github_pat_" not in SOURCE
     assert "api_key=" not in SOURCE.lower()

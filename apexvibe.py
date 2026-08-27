@@ -84,7 +84,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 STRING_SESSION = os.getenv("STRING_SESSION", "").strip()
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
 YT_COOKIES = os.getenv("YT_COOKIES", "").strip()
-COOKIE_URL = os.getenv("COOKIE_URL", "").strip()
 LOG_GROUP_ID = _int_env("LOG_GROUP_ID", 0)
 OWNER_ID = _int_env("OWNER_ID", 0)
 OWNER_USERNAME = os.getenv("OWNER_USERNAME", "").strip()
@@ -222,10 +221,10 @@ async def _prepare_cookies() -> Path | None:
     if _cookie_file and _cookie_file.is_file():
         return _cookie_file
     raw = YT_COOKIES
-    if not raw and COOKIE_URL:
+    if raw.startswith(("https://", "http://")):
         try:
             client = await _get_http_client()
-            response = await client.get(COOKIE_URL, timeout=10)
+            response = await client.get(raw, timeout=10)
             response.raise_for_status()
             raw = response.text
         except Exception as exc:  # noqa: BLE001
