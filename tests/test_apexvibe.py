@@ -59,6 +59,15 @@ def test_stream_end_has_a_conservative_early_end_fence():
     assert "await _start_next(chat_id)" in SOURCE
 
 
+def test_autoplay_is_bounded_and_manual_play_can_take_over():
+    assert "AUTOPLAY_ENABLED = _flag_env(\"AUTOPLAY\", True)" in SOURCE
+    assert "AUTOPLAY_TIMEOUT" in SOURCE
+    assert "async def _autoplay_next" in SOURCE
+    assert "state.transition_task.cancel()" in SOURCE
+    assert "await _takeover_autoplay(chat_id)" in SOURCE
+    assert "state.generation != token" in SOURCE
+
+
 def test_youtube_credentials_are_environment_only():
     assert 'os.getenv("BOT_TOKEN"' in SOURCE
     assert 'os.getenv("STRING_SESSION"' in SOURCE
@@ -71,8 +80,13 @@ def test_youtube_credentials_are_environment_only():
 def test_heroku_files_are_minimal_and_consistent():
     app = json.loads((ROOT / "app.json").read_text(encoding="utf-8"))
     assert app["formation"]["worker"]["quantity"] == 1
-    assert "API_ID" in app["env"]
-    assert "STRING_SESSION" in app["env"]
+    required = {
+        "API_ID", "API_HASH", "BOT_TOKEN", "STRING_SESSION", "LOG_GROUP_ID",
+        "OWNER_ID", "OWNER_USERNAME", "UPDATE_CHANNEL", "SUPPORT_GROUP",
+        "SUPPORT_CHANNEL", "YOUTUBE_API_KEY", "YT_COOKIES", "AUTOPLAY",
+    }
+    assert required.issubset(app["env"])
+    assert app["env"]["AUTOPLAY"]["value"] == "true"
     assert "MONGO_DB_URI" not in app["env"]
     assert (ROOT / "Procfile").read_text(encoding="utf-8").startswith("worker:")
     assert (ROOT / "Aptfile").read_text(encoding="utf-8").strip() == "ffmpeg"

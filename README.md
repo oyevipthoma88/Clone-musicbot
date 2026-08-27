@@ -20,6 +20,13 @@ The worker requires:
 | `API_HASH` | Yes | Telegram API hash |
 | `BOT_TOKEN` | Yes | BotFather token |
 | `STRING_SESSION` | Yes | Assistant account session used by PyTgCalls |
+| `LOG_GROUP_ID` | Yes | Private log group/channel ID |
+| `OWNER_ID` | Yes | Numeric owner ID |
+| `OWNER_USERNAME` | No | Owner username for informational links |
+| `UPDATE_CHANNEL` | No | Update channel username or link |
+| `SUPPORT_GROUP` | No | Support group username or link |
+| `SUPPORT_CHANNEL` | No | Support channel username or link |
+| `AUTOPLAY` | No | Related-track autoplay when the queue is empty; default `true` |
 | `YT_COOKIES` | No | Netscape `cookies.txt` text or base64 value |
 | `COOKIE_URL` | No | Private raw cookies URL, used only when `YT_COOKIES` is empty |
 | `YOUTUBE_API_KEY` | No | YouTube Data API v3 key for fast search |
@@ -30,7 +37,7 @@ The assistant account and the bot must be members of the group. The assistant ne
 
 A direct YouTube audio URL is attempted first. If it is rejected, ApexVibe performs one bounded audio download under a global one-slot lock, then plays the completed cache file. Completed files are kept under a capped `/tmp/apexvibe-cache` directory and old files are evicted by access time. No growing `.part` file is handed to PyTgCalls, and no full movie/video pipeline is included in this music-only build.
 
-Each chat has a generation counter. A new `/skip` cancels the previous play task and advances only the current queue state; an older resolver cannot call PyTgCalls after it has been superseded. `/skip` acknowledges immediately and performs the voice transition in a tracked background task.
+Each chat has a generation counter. A new `/skip` cancels the previous play task and advances only the current queue state; an older resolver cannot call PyTgCalls after it has been superseded. `/skip` acknowledges immediately and performs the voice transition in a tracked background task. With `AUTOPLAY=true`, a single bounded related-track lookup starts only after the queue is empty; a manual `/play` cancels that lookup or stream before it can commit, so autoplay cannot replace a newer user request.
 
 ## Local run
 

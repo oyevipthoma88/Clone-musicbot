@@ -19,6 +19,35 @@
       "description": "Assistant Pyrogram string session; required for voice-chat streaming",
       "required": true
     },
+    "LOG_GROUP_ID": {
+      "description": "Private Telegram log group or channel ID",
+      "required": true
+    },
+    "OWNER_ID": {
+      "description": "Numeric Telegram owner ID",
+      "required": true
+    },
+    "OWNER_USERNAME": {
+      "description": "Owner username used in informational messages, without @",
+      "required": false
+    },
+    "UPDATE_CHANNEL": {
+      "description": "Update channel username or invite link",
+      "required": false
+    },
+    "SUPPORT_GROUP": {
+      "description": "Support group username or invite link",
+      "required": false
+    },
+    "SUPPORT_CHANNEL": {
+      "description": "Support channel username or invite link",
+      "required": false
+    },
+    "AUTOPLAY": {
+      "description": "Automatically select one related song when the queue is empty",
+      "value": "true",
+      "required": false
+    },
     "YT_COOKIES": {
       "description": "Optional Netscape cookies.txt contents or base64 value for YouTube reliability",
       "required": false

@@ -71,6 +71,13 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
+def _flag_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 API_ID = _int_env("API_ID", 0)
 API_HASH = os.getenv("API_HASH", "").strip()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -78,12 +85,20 @@ STRING_SESSION = os.getenv("STRING_SESSION", "").strip()
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "").strip()
 YT_COOKIES = os.getenv("YT_COOKIES", "").strip()
 COOKIE_URL = os.getenv("COOKIE_URL", "").strip()
+LOG_GROUP_ID = _int_env("LOG_GROUP_ID", 0)
+OWNER_ID = _int_env("OWNER_ID", 0)
+OWNER_USERNAME = os.getenv("OWNER_USERNAME", "").strip()
+UPDATE_CHANNEL = os.getenv("UPDATE_CHANNEL", "").strip()
+SUPPORT_GROUP = os.getenv("SUPPORT_GROUP", "").strip()
+SUPPORT_CHANNEL = os.getenv("SUPPORT_CHANNEL", "").strip()
 DOWNLOAD_DIR = Path(os.getenv("DOWNLOAD_DIR", "/tmp/apexvibe-cache"))
 CACHE_LIMIT_MB = max(32, min(_int_env("CACHE_LIMIT_MB", 96), 256))
 DIRECT_TIMEOUT = max(3.0, min(_float_env("DIRECT_TIMEOUT", 7.0), 20.0))
 LOCAL_TIMEOUT = max(5.0, min(_float_env("LOCAL_TIMEOUT", 18.0), 45.0))
 CONTROL_TIMEOUT = max(2.0, min(_float_env("CONTROL_TIMEOUT", 5.0), 15.0))
 MAX_DOWNLOAD_SECONDS = max(30.0, min(_float_env("MAX_DOWNLOAD_SECONDS", 240.0), 900.0))
+AUTOPLAY_ENABLED = _flag_env("AUTOPLAY", True)
+AUTOPLAY_TIMEOUT = max(8.0, min(_float_env("AUTOPLAY_TIMEOUT", 25.0), 60.0))
 
 
 YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
@@ -113,6 +128,7 @@ class ChatState:
     volume: int = 100
     speed: float = 1.0
     paused: bool = False
+    autoplaying: bool = False
 
 
 states: dict[int, ChatState] = {}
@@ -605,20 +621,82 @@ async def _skip(chat_id: int) -> None:
     async with state.control_lock:
         state.generation += 1
         old_task = state.play_task
+        transition = state.transition_task
         state.play_task = None
+        state.transition_task = None
         state.current = None
         state.started_at = 0.0
         next_track = state.queue.popleft() if state.queue else None
-        if old_task and not old_task.done():
-            old_task.cancel()
-    if old_task and not old_task.done():
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await old_task
+        for task in (old_task, transition):
+            if task and not task.done() and task is not asyncio.current_task():
+                task.cancel()
+    for task in (old_task, transition):
+        if task and not task.done() and task is not asyncio.current_task():
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
     await _leave(chat_id)
     if next_track:
         async with state.control_lock:
             state.queue.appendleft(next_track)
         await _start_next(chat_id)
+
+
+# ── Autoplay ───────────────────────────────────────────────────────────────────
+async def _find_related_track(previous: Track) -> Track | None:
+    """Find one related audio result without a second heavy player pipeline."""
+    query = f"{previous.title} official audio"
+    try:
+        info = await asyncio.wait_for(
+            asyncio.to_thread(_extract_sync, f"ytsearch5:{query}"),
+            timeout=AUTOPLAY_TIMEOUT,
+        )
+    except Exception as exc:  # noqa: BLE001
+        LOG.info("autoplay lookup failed: %s", exc)
+        return None
+    entries = info.get("entries") or []
+    for entry in entries:
+        candidate = _track_from_entry(entry or {})
+        if candidate and candidate.video_id != previous.video_id:
+            return candidate
+    return None
+
+
+async def _autoplay_next(chat_id: int, previous: Track, token: int) -> None:
+    state = _state(chat_id)
+    try:
+        candidate = await _find_related_track(previous)
+        async with state.control_lock:
+            if not AUTOPLAY_ENABLED or state.generation != token or state.current is not None:
+                return
+            if not candidate:
+                return
+            state.generation += 1
+            generation = state.generation
+            state.current = candidate
+            state.autoplaying = True
+            state.play_task = asyncio.create_task(
+                _play_track(chat_id, candidate, generation),
+                name=f"autoplay-{chat_id}-{generation}",
+            )
+            play_task = state.play_task
+        try:
+            ok = await play_task
+        except asyncio.CancelledError:
+            return
+        finally:
+            async with state.control_lock:
+                if state.play_task is play_task:
+                    state.play_task = None
+                state.autoplaying = False
+        if not ok:
+            async with state.control_lock:
+                if state.generation == generation:
+                    state.current = None
+    finally:
+        async with state.control_lock:
+            if state.transition_task is asyncio.current_task():
+                state.transition_task = None
+            state.autoplaying = False
 
 
 # ── Music controls ───────────────────────────────────────────────────────────
@@ -665,19 +743,48 @@ async def _control(method: str, chat_id: int, *args) -> bool:
         return False
 
 
+async def _takeover_autoplay(chat_id: int) -> None:
+    state = _state(chat_id)
+    async with state.control_lock:
+        if not state.autoplaying:
+            return
+        state.generation += 1
+        old_task = state.play_task
+        transition = state.transition_task
+        had_current = state.current is not None
+        state.play_task = None
+        state.transition_task = None
+        state.current = None
+        state.started_at = 0.0
+        state.autoplaying = False
+        for task in (old_task, transition):
+            if task and not task.done() and task is not asyncio.current_task():
+                task.cancel()
+    for task in (old_task, transition):
+        if task and not task.done() and task is not asyncio.current_task():
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+    if had_current:
+        await _leave(chat_id)
+
+
 async def _stop_current_only(chat_id: int) -> None:
     state = _state(chat_id)
     async with state.control_lock:
         state.generation += 1
         old_task = state.play_task
+        transition = state.transition_task
         state.play_task = None
+        state.transition_task = None
         state.current = None
         state.started_at = 0.0
-        if old_task and not old_task.done():
-            old_task.cancel()
-    if old_task and not old_task.done():
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            await old_task
+        for task in (old_task, transition):
+            if task and not task.done() and task is not asyncio.current_task():
+                task.cancel()
+    for task in (old_task, transition):
+        if task and not task.done() and task is not asyncio.current_task():
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
     await _leave(chat_id)
 
 
@@ -728,6 +835,10 @@ def _queue_text(state: ChatState) -> str:
 
 async def _play_requested(message: Message, query: str, *, force: bool = False) -> None:
     chat_id = message.chat.id
+    # Claim the chat before the potentially slow YouTube lookup. Otherwise a
+    # natural-end autoplay resolver can commit a song while this manual /play
+    # is still searching.
+    await _takeover_autoplay(chat_id)
     status = await message.reply_text("🔎 Searching…")
     tracks = await find_tracks(query, limit=10 if "list=" in query else 1)
     if not tracks:
@@ -740,6 +851,10 @@ async def _play_requested(message: Message, query: str, *, force: bool = False) 
             state.queue.clear()
     state = _state(chat_id)
     async with state.control_lock:
+        if state.transition_task and not state.transition_task.done():
+            state.transition_task.cancel()
+            state.transition_task = None
+        state.autoplaying = False
         busy = bool(state.current or (state.play_task and not state.play_task.done()))
         if busy:
             state.queue.extend(tracks)
@@ -992,7 +1107,18 @@ async def on_stream_update(_, update) -> None:
         state.started_at = 0.0
         state.play_task = None
         if not state.queue:
+            if AUTOPLAY_ENABLED and finished:
+                state.generation += 1
+                token = state.generation
+                state.autoplaying = True
+                state.transition_task = _spawn(
+                    _autoplay_next(chat_id, finished, token),
+                    f"autoplay-transition-{chat_id}",
+                )
+            else:
+                state.autoplaying = False
             return
+        state.autoplaying = False
     # Reuse the same guarded starter as failure recovery. It takes the queue
     # lock only after the end event has released it, so /skip remains responsive.
     await _start_next(chat_id)
