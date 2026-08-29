@@ -402,8 +402,9 @@ async def find_track(query: str) -> Track | None:
     if video_id:
         return Track(video_id, "YouTube track", _yt_url(video_id))
     try:
-        track = await _api_search(query)
+        track = await asyncio.wait_for(_api_search(query), timeout=4.0)
         if track:
+            LOG.info("track search resolved via YouTube API query=%r elapsed=%.2fs", query, time.monotonic() - started)
             return track
     except Exception as exc:  # noqa: BLE001
         LOG.info("YouTube API search failed; using yt-dlp search: %s", exc)
