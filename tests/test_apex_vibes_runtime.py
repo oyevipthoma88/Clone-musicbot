@@ -15,8 +15,10 @@ def test_music_entrypoint_and_procfile():
 
 def test_only_music_plugins_are_present():
     plugins = {p.relative_to(ROOT / 'melody/plugins').as_posix() for p in (ROOT / 'melody/plugins').rglob('*.py')}
-    assert all(p.startswith(('__init__.py', 'music/')) for p in plugins)
+    assert all(p.startswith(('__init__.py', 'music/', 'owner/')) for p in plugins)
+    assert plugins <= {'__init__.py', 'music/__init__.py', 'music/channel_controls.py', 'music/channelplay.py', 'music/controls.py', 'music/download.py', 'music/live.py', 'music/loop.py', 'music/nowplaying.py', 'music/play.py', 'music/playlist.py', 'music/playmode.py', 'music/queue_cmd.py', 'music/saved_playlist.py', 'music/search.py', 'music/seek.py', 'music/shuffle.py', 'music/speed.py', 'music/vc_session.py', 'music/volume.py', 'owner/__init__.py', 'owner/panel.py'}
     assert not any('lyrics' in p for p in plugins)
+    assert (ROOT / 'melody/plugins/owner/panel.py').exists()
 
 
 def test_playback_pipeline_has_fast_fallback_and_cdn_headers():
@@ -43,6 +45,7 @@ def test_removed_features_are_not_registered():
     controls = read('melody/plugins/music/controls.py')
     for command in ('lyrics', 'revoke', 'extra', 'groupmanager', 'group_manager'):
         assert f'botcommand("{command}"' not in main.lower()
+        assert f'filters.command("{command}"' not in main.lower()
         assert f'filters.command("{command}"' not in controls.lower()
     assert 'lyrics_callback' not in controls
     assert 'lyricsgenius' not in controls

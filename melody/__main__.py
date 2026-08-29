@@ -93,8 +93,7 @@ def load_plugins():
     loaded = 0
     failed = 0
     failed_names = []
-    music_only = bool(getattr(Config, "MUSIC_ONLY_MODE", False))
-    allowed_prefix = "melody.plugins.music."
+    allowed_prefixes = ("melody.plugins.music.", "melody.plugins.owner.panel")
 
     for _finder, module_name, is_pkg in pkgutil.walk_packages(
         path=melody.plugins.__path__,
@@ -103,7 +102,7 @@ def load_plugins():
     ):
         if is_pkg:
             continue  # skip __init__ packages, load leaf modules only
-        if not module_name.startswith(allowed_prefix):
+        if not any(module_name.startswith(prefix) for prefix in allowed_prefixes):
             continue
         try:
             importlib.import_module(module_name)
@@ -266,7 +265,9 @@ async def register_slash_commands(bot):
         BotCommand("cvplay", "🎬 Play video in channel voice chat"),
     ]
     private_commands = []
-    owner_commands = []
+    owner_commands = [
+        BotCommand("panel", "Open Apex Vibes owner panel"),
+    ]
 
     try:
         await bot.set_bot_commands(group_commands, scope=BotCommandScopeAllGroupChats())
