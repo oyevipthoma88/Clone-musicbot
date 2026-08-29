@@ -143,7 +143,7 @@ async def reboot_cmd(client: Client, message: Message):
 
     await message.reply(
         quote_html(
-            "<blockquote>🔁 <b>Rᴇʙᴏᴏᴛɪɴɢ Mᴇʟᴏᴅʏ…</b></blockquote>\n"
+            "<blockquote>🔁 <b>Rᴇʙᴏᴏᴛɪɴɢ 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔…</b></blockquote>\n"
             "<i>Kuch hi seconds mein wapas online.</i>"
         ),
         parse_mode=enums.ParseMode.HTML,

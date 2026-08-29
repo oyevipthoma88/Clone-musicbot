@@ -1,5 +1,5 @@
 #!/bin/bash
-### 𝙈𝙚𝙡𝙤𝙙𝙞𝙓 🎧 Installer
+### 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ 🎧 Installer
 
 pprint (){
 	cred='\033[0;31m'
@@ -52,7 +52,7 @@ packages(){
 			pprint "SUCCESS.\n\n" "cgreen"
 		else
 			pprint "FAIL.\n\n" "cred"
-			pprint "You need to install ffmpeg manually in order to use Melody Music Bot, exiting..\n" "cblue"
+			pprint "You need to install ffmpeg manually in order to use Apex Vibes, exiting..\n" "cblue"
 			exit 1
 		fi
 	fi
@@ -75,7 +75,7 @@ node(){
 
 repo(){
 	# Get git repo if the installer is runned standalone
-	[[ ! "Melody_music" == $(basename -s .git `git config --get remote.origin.url`) ]] &&
+	[[ ! "Clone-musicbot" == $(basename -s .git `git config --get remote.origin.url`) ]] &&
 	git clone <your-private-repo-url> melody && cd melody
 }
 
@@ -90,7 +90,7 @@ installation(){
 }
 
 clear
-pprint "Welcome to 𝙈𝙚𝙡𝙤𝙙𝙞𝙓 🎧 Setup Installer\n\n"
+pprint "Welcome to 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ 🎧 Setup Installer\n\n"
 pprint "If you see any error during Installation Process, Please refer to these files for logs: "
 pprint "\nFor node js errors , Checkout nodelog.txt"
 pprint "\nFor pypi packages errors , Checkout pypilog.txt"
@@ -103,7 +103,7 @@ packages
 node
 repo
 installation
-pprint "\n\n\n\n\n𝙈𝙚𝙡𝙤𝙙𝙞𝙓 🎧 Installation Completed!" "cgreen"
+pprint "\n\n\n\n\n𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ 🎧 Installation Completed!" "cgreen"
 sleep 4
 clear
 
@@ -132,6 +132,6 @@ MUSIC_BOT_NAME = $mbt
 STRING_SESSION = $string_session
 OWNER_ID = $ownid""" > .env
 clear
-pprint "\n\n\nYour Vars have been saved Successfully!, Thanks for using Melody Music Installer, now you can proceed by starting the bot with bash start!"
+pprint "\n\n\nYour Vars have been saved Successfully!, Thanks for using Apex Vibes Installer, now you can proceed by starting the bot with bash start!"
 pprint "\n\n\nWant more vars?"
 pprint "\nCheckout config.py and README.md inside config folder for addtional vars. You can change all images , thumbnails, mode and everything from vars. Have a look towards them\n\n"

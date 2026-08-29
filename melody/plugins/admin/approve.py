@@ -78,7 +78,7 @@ async def approve_cmd(client: Client, message: Message):
         changed = await approve_user(message.chat.id, user.id)
         body = (
             f"✅ {mention(user)} <b>ɪs ᴀᴘᴘʀᴏᴠᴇᴅ.</b>\n"
-            "🛡 Mᴇʟᴏᴅʏ ᴡɪʟʟ ɴᴏᴡ <b>ɪɢɴᴏʀᴇ</b> ᴇᴠᴇʀʏᴛʜɪɴɢ ᴛʜᴇʏ sᴇɴᴅ —\n"
+            "🛡 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 ᴡɪʟʟ ɴᴏᴡ <b>ɪɢɴᴏʀᴇ</b> ᴇᴠᴇʀʏᴛʜɪɴɢ ᴛʜᴇʏ sᴇɴᴅ —\n"
             "ɴᴏᴛʜɪɴɢ ᴏғ ᴛʜᴇɪʀs ɪs ᴅᴇʟᴇᴛᴇᴅ, ᴡᴀʀɴᴇᴅ, ᴍᴜᴛᴇᴅ ᴏʀ ʙᴀɴɴᴇᴅ."
             if changed else
             f"ℹ {mention(user)} <b>ᴡᴀs ᴀʟʀᴇᴀᴅʏ ᴀᴘᴘʀᴏᴠᴇᴅ.</b>"

@@ -49,7 +49,7 @@ def _cooldown(seconds: int) -> str:
     return f"{sec}s"
 
 
-def _profile_card(user, doc: dict, title: str = "Mᴇʟᴏᴅʏ Cᴏɪɴs") -> str:
+def _profile_card(user, doc: dict, title: str = "𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 Cᴏɪɴs") -> str:
     wallet = int(doc.get("wallet") or 0)
     bank = int(doc.get("bank") or 0)
     total = wallet + bank
@@ -198,6 +198,6 @@ async def economy_leaderboard(client: Client, message: Message):
 @error_handler
 async def economy_help(client: Client, message: Message):
     await message.reply(
-        card("Mᴇʟᴏᴅʏ Eᴄᴏɴᴏᴍʏ", "🪙 <code>/balance</code> — wallet, bank, level\n🎁 <code>/daily</code> — daily reward\n💼 <code>/work</code> — earn coins\n🏦 <code>/deposit 500</code> / <code>/withdraw 500</code>\n💸 <code>/pay @user 500</code> — transfer\n🏆 <code>/leaderboard</code> — top players\n\n<i>No betting, no real-money value — just a group game.</i>"),
+        card("𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 Eᴄᴏɴᴏᴍʏ", "🪙 <code>/balance</code> — wallet, bank, level\n🎁 <code>/daily</code> — daily reward\n💼 <code>/work</code> — earn coins\n🏦 <code>/deposit 500</code> / <code>/withdraw 500</code>\n💸 <code>/pay @user 500</code> — transfer\n🏆 <code>/leaderboard</code> — top players\n\n<i>No betting, no real-money value — just a group game.</i>"),
         parse_mode=enums.ParseMode.HTML,
     )

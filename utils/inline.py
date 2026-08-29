@@ -72,7 +72,7 @@ AUTOPLAY_ON_ICON_ID = "5226702984204797593"  # 🔄, Telegram-verified
 AUTOPLAY_OFF_ICON_ID = "5098211821999883164"  # 🚫, Telegram-verified
 # Brand button that replaced "Add Bot" on the playing card.
 BRAND_ICON_ID = "4916169087698076775"  # 🎵, Telegram-verified
-BRAND_LABEL = "- 𝑴𝒆𝒍𝑜𝒅𝒊𝒙 𝑴𝒖𝒔𝒊𝒄 .ᐟ.ᐟ"
+BRAND_LABEL = "- 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ"
 
 
 PE = {

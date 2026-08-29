@@ -108,7 +108,7 @@ async def _main_panel(chat_id: int):
     _trig = await _get_setting(chat_id, "trigger_response", None)
     trigger_on = True if _trig is None else bool(_trig)
     text = card(
-        "Mᴇʟᴏᴅʏ Sᴇᴛᴛɪɴɢs",
+        "𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 Sᴇᴛᴛɪɴɢs",
         "🎚 <b>Eᴠᴇʀʏ ғɪʟᴛᴇʀ, ᴏɴᴇ ᴛᴀᴘ.</b>\n\n"
         f"┌ 🛡 <b>Pʀᴏᴛᴇᴄᴛɪᴏɴ :</b> {_dot(prot.get('enabled'))}\n"
         f"├ 🔐 <b>Sᴀғᴇ Mᴏᴅᴇ :</b> {_dot(safe_on)}\n"

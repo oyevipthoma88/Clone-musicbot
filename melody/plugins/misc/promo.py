@@ -43,7 +43,7 @@ _LINES = (
 def _kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
         [ikb(
-            "➕ Aᴅᴅ Mᴇʟᴏᴅʏ ᴛᴏ Yᴏᴜʀ Gʀᴏᴜᴘ",
+            "➕ Aᴅᴅ 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 ᴛᴏ Yᴏᴜʀ Gʀᴏᴜᴘ",
             url=f"https://t.me/{Config.BOT_USERNAME.lstrip('@')}?startgroup=true",
         )],
         [
@@ -77,7 +77,7 @@ async def _random_promo(client: Client, message: Message):
 
         sent = await message.reply(
             card(
-                "Mᴇʟᴏᴅʏ Iɴᴠɪᴛᴇ",
+                "𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 Iɴᴠɪᴛᴇ",
                 f"👋 {mention(message.from_user)}\n\n🎵 <i>{random.choice(_LINES)}</i>",
             ),
             parse_mode=enums.ParseMode.HTML,

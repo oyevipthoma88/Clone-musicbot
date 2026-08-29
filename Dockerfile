@@ -1,7 +1,7 @@
 # ════════════════════════════════════════════════════════════
-#   𝙈𝙚𝙡𝙤𝙙𝙞𝙓 🎧  —  Docker Image
+#   𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ 🎧  —  Docker Image
 #   Owner  : @TheY_CaIl_mE_OG
-#   Bot    : @MelodiXMusic_Bot
+#   Bot    : @ApexVibesBot
 # ════════════════════════════════════════════════════════════
 
 FROM nikolaik/python-nodejs:python3.10-nodejs18

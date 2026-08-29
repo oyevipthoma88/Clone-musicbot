@@ -1,8 +1,8 @@
 <img src="https://telegra.ph/file/c0e014ff34f34d1056627.png" align="right" width="200" height="200"/>
 
-# 𝙈𝙚𝙡𝙤𝙙𝙞𝙓 🎧 <img src="https://img.shields.io/github/v/release/TheY_CaIl_mE_OG/Apex Vibes?color=black&logo=github&logoColor=black&style=social" alt="RELEASE">
+# 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 🎧 <img src="https://img.shields.io/github/v/release/TheY_CaIl_mE_OG/Apex Vibes?color=black&logo=github&logoColor=black&style=social" alt="RELEASE">
 
-[𝙈𝙚𝙡𝙤𝙙𝙞𝙓 🎧](the private Apex Vibes repository) is a Powerful Telegram Music+Video Bot written in Python using Pyrogram and Py-Tgcalls by which you can stream songs, video and even live streams in your group calls via various sources.
+[𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 🎧](the private Apex Vibes repository) is a Powerful Telegram Music+Video Bot written in Python using Pyrogram and Py-Tgcalls by which you can stream songs, video and even live streams in your group calls via various sources.
 
 [![Deploy to Heroku](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy?template=https://github.com/oyevipthoma88/Apex Vibes_music)
 
@@ -33,7 +33,7 @@ If you want to say **thank you** or/and support active development of Apex Vibes
 Together, we can make **Apex Vibes** better!
 # 📑 Acknowledgement / Credits
 
-Special thanks to these amazing projects/people which/who help power 𝙈𝙚𝙡𝙤𝙙𝙞𝙓 🎧:
+Special thanks to these amazing projects/people which/who help power 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 🎧:
 
 - [Pyrogram](https://github.com/pyrogram/pyrogram)
 - [Py-Tgcalls](https://github.com/pytgcalls/pytgcalls)

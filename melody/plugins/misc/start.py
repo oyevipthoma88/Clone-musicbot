@@ -109,7 +109,7 @@ WELCOME_DM = (
     f"{premium_emoji(PREMIUM_EMOJI_IDS['start'], '🎶')} <b>{fancy('APEX VIBES')}</b>\n"
     f"<i>{fancy('music + group manager + owner assistant')}</i>"
     "</blockquote>\n"
-    "🎧 <b>Hey!</b> ᴍᴀɪɴ <b>Mᴇʟᴏᴅʏ</b> — ᴛᴇʀᴇ ɢʀᴏᴜᴘ ᴋɪ ᴀᴡᴀᴀᴢ ᴀᴜʀ ᴄʜᴏᴡᴋɪᴅᴀʀ 🎤🛡\n"
+    "🎧 <b>Hey!</b> ᴍᴀɪɴ <b>𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔</b> — ᴛᴇʀᴇ ɢʀᴏᴜᴘ ᴋɪ ᴀᴡᴀᴀᴢ ᴀᴜʀ ᴄʜᴏᴡᴋɪᴅᴀʀ 🎤🛡\n"
     "<i>Ek bot me VC music + full group management + security.</i>\n"
     "<blockquote expandable>"
     "⚡ <b>Mᴀɪɴ ᴋʏᴀ ᴋᴀʀ sᴀᴋᴛᴀ ʜᴜ̃</b>\n"
@@ -150,7 +150,7 @@ WELCOME_GROUP = (
 
 # Trust panel: exactly which right is used for what, and what Apex Vibes never does.
 TRUST_TEXT = (
-    f"{headline('Wʜʏ Mᴇʟᴏᴅʏ ɴᴇᴇᴅs ᴀᴅᴍɪɴ ʀɪɢʜᴛs')}\n"
+    f"{headline('Wʜʏ 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 ɴᴇᴇᴅs ᴀᴅᴍɪɴ ʀɪɢʜᴛs')}\n"
     "<b>Har right ka saaf kaam hai:</b>\n"
     "┌ 🎙 <b>Manage Video Chats</b> — VC start/join karke gaana bajane ke liye\n"
     "├ 🗑 <b>Delete Messages</b> — <code>/purge</code>, <code>/cleanall</code>, spam & "
@@ -579,7 +579,7 @@ def _panel_back_kb(in_group: bool) -> InlineKeyboardMarkup:
 
 
 TOUR_TEXT = (
-    f"{headline('Mᴇʟᴏᴅʏ Fᴇᴀᴛᴜʀᴇ Tᴏᴜʀ')}\n"
+    f"{headline('𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 Fᴇᴀᴛᴜʀᴇ Tᴏᴜʀ')}\n"
     "🎵 <b>Mᴜsɪᴄ</b>\n"
     "┌ <code>/play &lt;song&gt;</code> — VC me HD audio\n"
     "├ <code>/vplay</code> — video stream · <code>/queue</code> · <code>/skip</code>\n"
