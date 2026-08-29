@@ -524,7 +524,18 @@ async def main():
     LOGGER.info("Starting 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ...")
 
     await bot.start()
-    LOGGER.info("Bot client started.")
+    try:
+        bot_identity = await asyncio.wait_for(bot.get_me(), timeout=8.0)
+        LOGGER.info(
+            "Bot client verified: @%s (connected=%s)",
+            getattr(bot_identity, "username", None) or "unknown",
+            bot.is_connected,
+        )
+    except Exception as exc:
+        LOGGER.critical("Bot client identity check failed after start: %s", exc)
+        await bot.stop()
+        raise
+    LOGGER.info("Bot client started and verified.")
 
     # ─── HEROKU LOG FIX: AUTH_KEY_DUPLICATED crash-loop ──────────────────────
     # Logs showed the dyno dying every ~20 s with:
