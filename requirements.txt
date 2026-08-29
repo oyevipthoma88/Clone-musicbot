@@ -2,6 +2,7 @@ kurigram>=2.2.25,<2.3
 tgcrypto>=1.2.5,<2
 py-tgcalls>=2.3.3,<2.4
 yt-dlp>=2026.8.19,<2027.0.0
+curl_cffi>=0.16.2,<0.17
 httpx>=0.28.1,<1
 Pillow>=12.3.0,<13
 python-dotenv>=1.2.3,<2

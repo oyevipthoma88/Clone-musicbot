@@ -273,12 +273,36 @@ def _ydl_options(*, download: bool = False, output: str | None = None) -> dict:
         "noplaylist": True,
         "ignoreerrors": False,
         "socket_timeout": 10,
-        "retries": 2,
-        "fragment_retries": 2,
-        "concurrent_fragment_downloads": 1,
-        "format": "bestaudio[ext=webm]/bestaudio[acodec=opus]/bestaudio/best",
+        "retries": 3,
+        "fragment_retries": 5,
+        "extractor_retries": 2,
+        "file_access_retries": 3,
+        # Prefer a small WebM/Opus stream, but keep broad fallbacks because
+        # YouTube may hide individual formats behind PO-token/SABR gating.
+        "format": (
+            "bestaudio[ext=webm][abr<=96]/"
+            "bestaudio[ext=webm][abr<=128]/"
+            "bestaudio[acodec=opus][abr<=128]/"
+            "bestaudio/best"
+        ),
         "extractor_args": {
-            "youtube": {"player_client": ["android_music", "ios", "web"]}
+            "youtube": {
+                "player_client": ["tv", "ios", "web_safari"],
+                "formats": ["missing_pot"],
+                "player_skip": ["configs"],
+                "skip": ["translated_subs"],
+            }
+        },
+        "geo_bypass": True,
+        "geo_bypass_country": "US",
+        "fixup": "never",
+        "external_downloader": {"default": "native"},
+        "hls_prefer_native": True,
+        "check_formats": False,
+        "concurrent_fragment_downloads": 4,
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 Chrome/112.0.0.0 Mobile Safari/537.36",
+            "Referer": "https://www.youtube.com/",
         },
     }
     if download:
