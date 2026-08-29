@@ -153,6 +153,7 @@ states: dict[int, ChatState] = {}
 _background_tasks: set[asyncio.Task] = set()
 _download_lock = asyncio.Lock()
 _http_client: httpx.AsyncClient | None = None
+_youtube_api_disabled_until = 0.0
 _cookie_file: Path | None = None
 _setup_sessions: dict[int, dict] = {}
 _clone_processes: dict[int, asyncio.subprocess.Process] = {}
@@ -287,7 +288,9 @@ def _ydl_options(*, download: bool = False, output: str | None = None) -> dict:
         ),
         "extractor_args": {
             "youtube": {
-                "player_client": ["tv", "ios", "web_safari"],
+                # android_vr works on cloud IPs where tv/ios/web_safari can
+                # return "The page needs to be reloaded" without a PO token.
+                "player_client": ["android_vr", "tv", "ios", "web_safari"],
                 "formats": ["missing_pot"],
                 "player_skip": ["configs"],
                 "skip": ["translated_subs"],
@@ -338,7 +341,13 @@ async def _get_http_client() -> httpx.AsyncClient:
 
 
 async def _api_search(query: str) -> Track | None:
+    global _youtube_api_disabled_until
     if not YOUTUBE_API_KEY:
+        return None
+    # A quota-exhausted key returned HTTP 429 on every request in the logs.
+    # Avoid paying that latency on every /play; yt-dlp search remains the
+    # deterministic fallback and the circuit automatically retries later.
+    if time.monotonic() < _youtube_api_disabled_until:
         return None
     client = await _get_http_client()
     response = await client.get(
@@ -352,6 +361,10 @@ async def _api_search(query: str) -> Track | None:
             "key": YOUTUBE_API_KEY,
         },
     )
+    if response.status_code == 429:
+        _youtube_api_disabled_until = time.monotonic() + 300.0
+        LOG.warning("YouTube API quota/rate limit reached; disabling API search for 5 minutes")
+        return None
     response.raise_for_status()
     items = response.json().get("items") or []
     if not items:
@@ -384,6 +397,7 @@ def _track_from_entry(entry: dict) -> Track | None:
 
 
 async def find_track(query: str) -> Track | None:
+    started = time.monotonic()
     video_id = _youtube_id(query)
     if video_id:
         return Track(video_id, "YouTube track", _yt_url(video_id))
@@ -408,7 +422,9 @@ async def find_track(query: str) -> Track | None:
     video_id = entry.get("id")
     if not YOUTUBE_ID_RE.fullmatch(video_id or ""):
         return None
-    return _track_from_entry(entry)
+    track = _track_from_entry(entry)
+    LOG.info("track search resolved query=%r video_id=%s elapsed=%.2fs", query, track.video_id if track else "-", time.monotonic() - started)
+    return track
 
 
 def _playlist_sync(url: str) -> dict:
@@ -478,6 +494,7 @@ def _cached_path(video_id: str) -> Path | None:
 
 
 async def resolve_direct(track: Track) -> Track | None:
+    started = time.monotonic()
     try:
         info = await asyncio.wait_for(
             asyncio.to_thread(_extract_sync, track.webpage_url), timeout=16
@@ -500,6 +517,7 @@ async def resolve_direct(track: Track) -> Track | None:
     track.uploader = (info.get("uploader") or info.get("channel") or track.uploader)[:120]
     track.thumbnail = info.get("thumbnail") or track.thumbnail
     track.source = url
+    LOG.info("direct URL resolved video_id=%s elapsed=%.2fs", track.video_id, time.monotonic() - started)
     return track
 
 
@@ -564,7 +582,23 @@ def _stream(source: str, *, seek: int = 0, speed: float = 1.0) -> MediaStream:
         kwargs["audio_parameters"] = quality
     params = []
     if source.startswith(("http://", "https://")):
+        # YouTube CDN URLs are signed for the extractor's request
+        # fingerprint. Without matching headers FFmpeg receives HTTP 403 even
+        # though yt-dlp successfully resolved the URL.
         params.extend(["-reconnect 1", "-reconnect_streamed 1", "-reconnect_delay_max 5"])
+        # PyTgCalls forwards MediaStream.headers to both its probe and
+        # playback FFmpeg processes. Passing User-Agent/Referer here is
+        # essential: putting them only in ffmpeg_parameters does not cover
+        # PyTgCalls' preflight probe and produces a CDN HTTP 403.
+        kwargs["headers"] = {
+            "User-Agent": (
+                "Mozilla/5.0 (Linux; Android 13; SM-S908B) "
+                "AppleWebKit/537.36 Chrome/112.0.0.0 "
+                "Mobile Safari/537.36"
+            ),
+            "Referer": "https://www.youtube.com/",
+            "Origin": "https://www.youtube.com",
+        }
     if seek > 0:
         params.append(f"-ss {int(seek)}")
     if abs(speed - 1.0) > 0.01:
@@ -592,6 +626,7 @@ async def _play_source(chat_id: int, source: str, timeout: float, *, seek: int =
 
 
 async def _play_track(chat_id: int, track: Track, generation: int, *, seek: int = 0) -> bool:
+    started = time.monotonic()
     state = _state(chat_id)
     speed = state.speed
     if not _is_current(chat_id, generation):
@@ -606,6 +641,7 @@ async def _play_track(chat_id: int, track: Track, generation: int, *, seek: int 
         source = direct.source if direct else None
         timeout = DIRECT_TIMEOUT
     if source and await _play_source(chat_id, source, timeout, seek=seek, speed=speed):
+        LOG.info("playback handoff succeeded chat_id=%s video_id=%s path=direct elapsed=%.2fs", chat_id, track.video_id, time.monotonic() - started)
         if _is_current(chat_id, generation):
             state.current = track
             state.started_at = time.monotonic()
@@ -613,6 +649,7 @@ async def _play_track(chat_id: int, track: Track, generation: int, *, seek: int 
         return False
     if not _is_current(chat_id, generation):
         return False
+    LOG.info("direct handoff failed; starting bounded download chat_id=%s video_id=%s elapsed=%.2fs", chat_id, track.video_id, time.monotonic() - started)
     path = await download_track(track)
     if not path or not _is_current(chat_id, generation):
         return False
@@ -622,6 +659,7 @@ async def _play_track(chat_id: int, track: Track, generation: int, *, seek: int 
     if _is_current(chat_id, generation):
         state.current = track
         state.started_at = time.monotonic()
+        LOG.info("playback handoff succeeded chat_id=%s video_id=%s path=cache elapsed=%.2fs", chat_id, track.video_id, time.monotonic() - started)
         return True
     return False
 

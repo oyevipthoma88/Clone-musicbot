@@ -46,6 +46,18 @@ def test_playback_has_generation_fences_and_single_download_gate():
     assert "-reconnect_streamed 1" in SOURCE
 
 
+def test_youtube_cloud_fallback_and_api_rate_limit_guard_are_present():
+    assert '"player_client": ["android_vr", "tv", "ios", "web_safari"]' in SOURCE
+    assert '"formats": ["missing_pot"]' in SOURCE
+    assert '"external_downloader": {"default": "native"}' in SOURCE
+    assert '"fixup": "never"' in SOURCE
+    assert 'kwargs["headers"]' in SOURCE
+    assert '"Referer": "https://www.youtube.com/"' in SOURCE
+    assert "_youtube_api_disabled_until" in SOURCE
+    assert "response.status_code == 429" in SOURCE
+    assert "disabling API search for 5 minutes" in SOURCE
+
+
 def test_controls_are_detached_from_voice_transition():
     assert 'await message.reply_text("⏭ Skipping…")' in SOURCE
     assert '_spawn(_skip(message.chat.id)' in SOURCE
