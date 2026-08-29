@@ -25,10 +25,12 @@ def _mongo_target(uri: str) -> str:
         return "<invalid>"
 
 
+_MONGO_DATABASE = "ApexVibesDB"
+
 logging.getLogger("Apex Vibes").info(
     "Mongo runtime target: %s (database=%s)",
     _mongo_target(_mongo_uri),
-    "Apex VibesDB",
+    _MONGO_DATABASE,
 )
 
 # SPEED FIX ("cmnd bohot slow response deti hai"): the default Motor client
@@ -45,7 +47,7 @@ client = motor.motor_asyncio.AsyncIOMotorClient(
     retryWrites=True,
     compressors="zlib",
 )
-db = client["Apex VibesDB"]
+db = client[_MONGO_DATABASE]
 
 # Collections
 chats_col = db["chats"]
