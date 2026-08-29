@@ -36,7 +36,6 @@ httpx>=0.28.1,<1
 # Missing here previously -> httpx.Client(http2=True) raised ImportError and
 # every InnerTube search/related lookup failed instantly.
 h2>=4.4.1,<5
-lyricsgenius>=3.12.2,<4
 mutagen>=1.48.1,<2
 psutil>=7.2.2,<8
 colorlog>=6.12.0,<7

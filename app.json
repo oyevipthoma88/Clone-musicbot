@@ -1,6 +1,5 @@
 {
-  "name": "Melody Music Bot",
-  "description": "🎶 Premium Telegram Music Bot — YouTube streaming, AutoPlay, Lyrics, Colored Controls",
+  "name": "𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ",
   "keywords": [
     "telegram",
     "music",
@@ -24,7 +23,7 @@
       "required": true
     },
     "MONGO_DB_URI": {
-      "description": "NEW/live MongoDB Atlas URI for this Melody bot (mongodb+srv://...)",
+      "description": "NEW/live MongoDB Atlas URI for this 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ bot (mongodb+srv://...)",
       "required": true
     },
     "STRING_SESSION": {
@@ -45,12 +44,10 @@
       "required": true
     },
     "BOT_USERNAME": {
-      "description": "Your bot's username e.g. @YourMelodyBot",
+      "description": "Your bot's username e.g. @YourApexVibesBot",
       "value": "@MelodiXMusic_Bot",
       "required": false
     },
-    "GENIUS_API_TOKEN": {
-      "description": "Genius API token from genius.com/api-clients (for lyrics)",
       "required": false
     },
     "YT_COOKIES": {

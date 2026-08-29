@@ -188,7 +188,7 @@ _meta_cache: dict = {}
 # precise hit.
 _QUERY_NOISE_WORDS = {
     "song", "songs", "gana", "gaana", "gane", "play", "full", "audio", "video",
-    "lyrics", "lyrical", "official", "mp3", "mp4", "hd", "4k", "new", "latest",
+    "official", "mp3", "mp4", "hd", "4k", "new", "latest",
     "version", "remix", "original", "track", "music", "bajao", "sunao", "please",
 }
 

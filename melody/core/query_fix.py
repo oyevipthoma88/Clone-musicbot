@@ -9,7 +9,7 @@ badly misspelt + noisy query can still come back empty, and then every source
 
 The jugad, in order:
   1. clean the query (drop filler words like "song / gaana / play / video /
-     lyrics / mp3 / full", strip emoji + punctuation, collapse "sooong" →
+     mp3 / full", strip emoji + punctuation, collapse "sooong" →
      "soong", squeeze spaces),
   2. ask YouTube's own autocomplete for the corrected spelling — this is the
      exact same suggestion engine the YouTube app uses, so "cherra" comes back
@@ -46,7 +46,7 @@ _JSONP_RE = re.compile(r"^[^(]*\((.*)\)\s*;?\s*$", re.DOTALL)
 _FILLER = {
     "song", "songs", "gaana", "gana", "gane", "play", "bajao", "baja", "sunao",
     "suna", "video", "vid", "audio", "mp3", "mp4", "full", "hd", "4k", "official",
-    "lyrics", "lyrical", "please", "plz", "pls", "bhai", "yaar", "melody",
+    "please", "plz", "pls", "bhai", "yaar",
     "download", "track", "music", "musics", "ka", "ki", "wala", "wali",
 }
 

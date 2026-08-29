@@ -79,7 +79,6 @@ E = {
     "vol_up":  "🔊",
     "vol_dn":  "🔉",
     "mute":    "🔇",
-    "lyrics":  "🎵",
     "queue":   "📋",
     "search":  "🔍",
     "owner":   "♛",

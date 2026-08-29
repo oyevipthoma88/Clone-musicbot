@@ -1,5 +1,5 @@
 """
-🎶 Melody — Telegram Music Bot
+🎶 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ — Telegram Music Bot
 
 FIX (Silent crash root cause):
     `python -m melody` runs this file BEFORE any code in __main__.py executes —
@@ -65,7 +65,7 @@ def create_clients() -> tuple:
     from melody.config import Config
 
     bot = Client(
-        "MelodyBot",
+        "𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟBot",
         api_id=Config.API_ID,
         api_hash=Config.API_HASH,
         bot_token=Config.BOT_TOKEN,
@@ -91,7 +91,7 @@ def create_clients() -> tuple:
         max_concurrent_transmissions=_worker_count("BOT_TRANSMISSIONS", 2, 4),
     )
     assistant = Client(
-        "MelodyAssistant",
+        "𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟAssistant",
         api_id=Config.API_ID,
         api_hash=Config.API_HASH,
         session_string=Config.STRING_SESSION,
