@@ -56,6 +56,10 @@ logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
+# httpx logs request URLs at INFO, which would expose the YouTube API key
+# because the API requires it as a query parameter. Keep request details out
+# of Heroku logs; the bot's own sanitized stage logs remain enabled.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 # ── Environment ──────────────────────────────────────────────────────────────
@@ -401,21 +405,25 @@ async def find_track(query: str) -> Track | None:
     video_id = _youtube_id(query)
     if video_id:
         return Track(video_id, "YouTube track", _yt_url(video_id))
-    try:
-        track = await asyncio.wait_for(_api_search(query), timeout=4.0)
-        if track:
-            LOG.info("track search resolved via YouTube API query=%r elapsed=%.2fs", query, time.monotonic() - started)
-            return track
-    except Exception as exc:  # noqa: BLE001
-        LOG.info("YouTube API search failed; using yt-dlp search: %s", exc)
+    # yt-dlp is the primary search path. The configured API key was returning
+    # HTTP 429 in production, and search must not wait on a quota-exhausted
+    # optional service before trying the working fallback.
     try:
         info = await asyncio.wait_for(
-            asyncio.to_thread(_extract_sync, f"ytsearch1:{query}"), timeout=18
+            asyncio.to_thread(_extract_sync, f"ytsearch1:{query}"), timeout=8
         )
     except Exception as exc:  # noqa: BLE001
-        LOG.warning("search failed: %s", exc)
+        LOG.warning("yt-dlp search failed; trying YouTube API fallback: %s", exc)
+        try:
+            track = await asyncio.wait_for(_api_search(query), timeout=4.0)
+            if track:
+                LOG.info("track search resolved via YouTube API query=%r elapsed=%.2fs", query, time.monotonic() - started)
+                return track
+        except Exception as api_exc:  # noqa: BLE001
+            LOG.warning("YouTube API fallback failed: %s", api_exc)
         return None
     if not info:
+        LOG.warning("yt-dlp search returned no result for query=%r", query)
         return None
     entry = (info.get("entries") or [info])[0]
     if not entry:

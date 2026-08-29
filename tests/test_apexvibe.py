@@ -57,6 +57,9 @@ def test_youtube_cloud_fallback_and_api_rate_limit_guard_are_present():
     assert "response.status_code == 429" in SOURCE
     assert "disabling API search for 5 minutes" in SOURCE
     assert "asyncio.wait_for(_api_search(query), timeout=4.0)" in SOURCE
+    assert 'logging.getLogger("httpx").setLevel(logging.WARNING)' in SOURCE
+    assert 'asyncio.to_thread(_extract_sync, f"ytsearch1:{query}")' in SOURCE
+    assert 'timeout=8' in SOURCE
 
 
 def test_controls_are_detached_from_voice_transition():
