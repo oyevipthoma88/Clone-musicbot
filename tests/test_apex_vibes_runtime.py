@@ -16,7 +16,7 @@ def test_music_entrypoint_and_procfile():
 def test_only_music_plugins_are_present():
     plugins = {p.relative_to(ROOT / 'melody/plugins').as_posix() for p in (ROOT / 'melody/plugins').rglob('*.py')}
     assert all(p.startswith(('__init__.py', 'music/', 'owner/')) for p in plugins)
-    assert plugins <= {'__init__.py', 'music/__init__.py', 'music/channel_controls.py', 'music/channelplay.py', 'music/controls.py', 'music/download.py', 'music/live.py', 'music/loop.py', 'music/nowplaying.py', 'music/play.py', 'music/playlist.py', 'music/playmode.py', 'music/queue_cmd.py', 'music/saved_playlist.py', 'music/search.py', 'music/seek.py', 'music/shuffle.py', 'music/speed.py', 'music/vc_session.py', 'music/volume.py', 'owner/__init__.py', 'owner/panel.py'}
+    assert plugins <= {'__init__.py', 'music/__init__.py', 'music/channel_controls.py', 'music/channelplay.py', 'music/controls.py', 'music/download.py', 'music/live.py', 'music/loop.py', 'music/nowplaying.py', 'music/play.py', 'music/playlist.py', 'music/playmode.py', 'music/queue_cmd.py', 'music/saved_playlist.py', 'music/search.py', 'music/seek.py', 'music/shuffle.py', 'music/speed.py', 'music/start.py', 'music/vc_session.py', 'music/volume.py', 'owner/__init__.py', 'owner/panel.py'}
     assert not any('lyrics' in p for p in plugins)
     assert (ROOT / 'melody/plugins/owner/panel.py').exists()
 

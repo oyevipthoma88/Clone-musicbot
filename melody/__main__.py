@@ -264,7 +264,10 @@ async def register_slash_commands(bot):
         BotCommand("cplay", "▶️ Play in channel voice chat"),
         BotCommand("cvplay", "🎬 Play video in channel voice chat"),
     ]
-    private_commands = []
+    private_commands = [
+        BotCommand("start", "Start Apex Vibes"),
+        BotCommand("help", "Show music commands"),
+    ]
     owner_commands = [
         BotCommand("panel", "Open Apex Vibes owner panel"),
     ]
