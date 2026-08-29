@@ -2,7 +2,7 @@
 📡 /live · /stream · /m3u8 · /radio · /replay
 
 MISSING-FEATURE PARITY (Yukki / AnonXMusic / VIPMusic / TgMusicBot):
-Melody could only play things it could *resolve on YouTube*. Every top music
+Apex Vibes could only play things it could *resolve on YouTube*. Every top music
 bot also plays a raw stream endpoint — an HLS/m3u8 link, an internet-radio
 ICY stream, or any direct media URL — and every one of them has /replay to
 restart the current track from 00:00.

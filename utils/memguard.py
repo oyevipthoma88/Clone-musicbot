@@ -30,7 +30,7 @@ import gc
 import logging
 import os
 
-LOGGER = logging.getLogger("Melody")
+LOGGER = logging.getLogger("Apex Vibes")
 
 _libc = None
 

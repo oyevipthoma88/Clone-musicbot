@@ -1,5 +1,5 @@
 """
-🛡️ Shared group-administration helpers (Melody theme).
+🛡️ Shared group-administration helpers (Apex Vibes theme).
 
 BUG FIX (the reported "ban / unban properly work na krti"):
     The old check was `member.status in ("administrator", "creator")`.
@@ -107,7 +107,7 @@ def close_kb(extra: list | None = None) -> InlineKeyboardMarkup:
 
 
 def card(title: str, body: str, footer: str = "") -> str:
-    """Standard Melody card — same Modi–Meloni tricolour frame as every other
+    """Standard Apex Vibes card — same Modi–Meloni tricolour frame as every other
     card in the bot (see utils/melody_theme.py). Admin/owner/misc cards used
     to render a different, plainer header; now there is exactly one look."""
     from utils.melody_theme import card as themed_card

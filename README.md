@@ -1,4 +1,4 @@
-# 🎶 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ — Telegram Music Bot
+# 🎶 Apex Vibes — Telegram Music Bot
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python" />
@@ -8,6 +8,7 @@
 </p>
 
 <p align="center">
+  <b>Premium Telegram Music Bot • YouTube Streaming • AutoPlay • Lyrics • Colored Mini-App Controls</b>
 </p>
 
 ---
@@ -33,6 +34,7 @@
 | `LOG_GROUP_ID` | Private group ID for error logs | ✅ |
 | `OWNER_NAME` | Alias shown in play cards (default: Maestro) | ❌ |
 | `BOT_USERNAME` | Your bot's @username | ❌ |
+| `GENIUS_API_TOKEN` | From [genius.com/api-clients](https://genius.com/api-clients) | ❌ |
 | `YT_COOKIES` | Base64-encoded cookies.txt for YouTube | ❌ |
 | `AUTOPLAY` | Enable autoplay by default (default: true) | ❌ |
 
@@ -72,13 +74,47 @@ The live bot uses **only** `MONGO_DB_URI`, which must point to the new MongoDB A
 | `/loopall` | Loop entire queue |
 | `/noloop` | Disable loop |
 | `/speed [0.5-2.0]` | Playback speed |
+| `/autoplay on/off` | Toggle autoplay |
 
-### 🎧 Voice Chat
+### ℹ️ Info
 | Command | Description |
 |---------|-------------|
-| `/joinvc` | Join the group voice chat |
-| `/leavevc` | Leave the group voice chat |
-| `/autoend` | Leave when the voice chat becomes empty |
+| `/lyrics [song]` | Fetch lyrics from Genius |
+| `/ping` | Bot latency |
+| `/stats` | Bot statistics (uptime, RAM, chats) |
+| `/about` | About Apex Vibes (anonymous) |
+| `/start` | Welcome message |
+| `/help` | Inline categorized help |
+
+### 👑 Admin (group admins only)
+| Command | Description |
+|---------|-------------|
+| `/auth [user]` | Authorize user to use bot commands |
+| `/unauth [user]` | Remove authorization |
+| `/authlist` | List authorized users |
+| `/ban [user]` | Ban user from using bot |
+| `/unban [user]` | Unban user |
+
+### 🔒 Owner (hidden from /help)
+| Command | Description |
+|---------|-------------|
+| `/setpic` | Set the DM /start picture (send/reply to a photo). Saved permanently to GitHub — see `GITHUB_TOKEN`/`GITHUB_REPO`. |
+| `/delpic` | Remove the custom /start picture |
+| `/setwelcomepic` | Set the picture shown when the bot joins a new group (send/reply to a photo). Saved permanently to GitHub too. |
+| `/delwelcomepic` | Remove the custom group-welcome picture |
+| `/reboot` | Full process restart |
+| `/restart` | Same as /reboot |
+| `/reload` | Hot-reload all plugins (no restart) |
+| `/update` | Git pull + restart |
+| `/shell [cmd]` | Run shell command |
+| `/eval [code]` | Evaluate Python code |
+| `/logs` | Send bot log file |
+| `/stats` | Full stats (owner sees more) |
+| `/gban [user]` | Global ban user |
+| `/ungban [user]` | Remove global ban |
+| `/broadcast` | Mass message all chats |
+| `/chatlist` | List all served chats |
+| `/maintenance on/off` | Toggle maintenance mode |
 
 ---
 
@@ -86,7 +122,7 @@ The live bot uses **only** `MONGO_DB_URI`, which must point to the new MongoDB A
 
 ```bash
 git clone <your-private-repo-url>
-cd Clone-musicbot
+cd Apex Vibes_music
 pip install -r requirements.txt
 cp .env.example .env
 # Fill in .env values

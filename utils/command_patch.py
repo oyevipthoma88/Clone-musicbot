@@ -7,7 +7,7 @@ bhale /help@otherbotusername ho."
 Pyrogram's built-in `filters.command()` only fires when a command carries no
 `@username` suffix or carries THIS bot's username; `/help@SomeOtherBot` is
 ignored. This patch replaces the username check so any `@anything` suffix is
-accepted, while still splitting arguments exactly like Pyrogram does. Melody
+accepted, while still splitting arguments exactly like Pyrogram does. Apex Vibes
 therefore answers common commands even when they were typed at another music
 bot in the same group.
 
@@ -41,7 +41,7 @@ def _get_bot_username_lower() -> str:
 
     BUG FIX: this read ONLY Config.BOT_USERNAME. That value is empty until (or
     unless) the deploy sets it, and with an empty username the toggle below
-    could never tell "our bot" from "another bot" — so Melody kept answering
+    could never tell "our bot" from "another bot" — so Apex Vibes kept answering
     /cmd@OtherBot even with /trigger OFF. We now fall back to the live client's
     own `me.username` and cache it.
     """

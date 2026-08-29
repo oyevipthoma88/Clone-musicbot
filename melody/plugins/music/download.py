@@ -237,7 +237,7 @@ async def dl_callback(client: Client, cb: CallbackQuery):
             if audio_only:
                 path = await to_telegram_audio(
                     path, title=title,
-                    performer=str(info.get("uploader") or "Melody"),
+                    performer=str(info.get("uploader") or "Apex Vibes"),
                     cover=thumb_path,
                 )
             else:
@@ -294,7 +294,7 @@ async def dl_callback(client: Client, cb: CallbackQuery):
                     caption=caption,
                     parse_mode=enums.ParseMode.HTML,
                     title=title,
-                    performer=str(info.get("uploader") or "Melody"),
+                    performer=str(info.get("uploader") or "Apex Vibes"),
                     duration=duration,
                     thumb=thumb_path,
                     file_name=f"{_safe_name(title)}.mp3",

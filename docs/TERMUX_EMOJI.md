@@ -9,8 +9,8 @@ har plain unicode emoji ki jagah premium emoji dikhane ke liye use karta hai.
 ```bash
 pkg update -y && pkg install -y python git
 pip install -U pyrofork tgcrypto
-git clone https://github.com/thomas82822/Melody_music
-cd Melody_music
+git clone https://github.com/thomas82822/Apex Vibes_music
+cd Apex Vibes_music
 ```
 
 ## 2. API credentials

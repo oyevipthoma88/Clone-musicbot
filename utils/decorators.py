@@ -366,7 +366,7 @@ def error_handler(func):
     Send traceback to LOG_GROUP and show friendly message to user.
     Works for both Message handlers and CallbackQuery handlers.
 
-    BUG FIX (⚠️ Melody Error Log spam / crash on FloodWait):
+    BUG FIX (⚠️ Apex Vibes Error Log spam / crash on FloodWait):
     A FloodWait raised by Telegram (420 FLOOD_WAIT_X) is normal rate-limit
     back-pressure, not a bug — it used to be treated exactly like any other
     exception here: logged to LOG_GROUP as an "error" AND immediately

@@ -1,5 +1,5 @@
 """
-🎶 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ — Entry point
+🎶 Apex Vibes Bot — Entry point
 FIXES:
   - Plugins loaded BEFORE bot.start() so handlers register correctly
   - Slash commands registered via set_my_commands() on startup
@@ -93,7 +93,8 @@ def load_plugins():
     loaded = 0
     failed = 0
     failed_names = []
-    allowed_prefixes = ("melody.plugins.music.", "melody.plugins.owner.panel")
+    music_only = bool(getattr(Config, "MUSIC_ONLY_MODE", False))
+    allowed_prefix = "melody.plugins.music."
 
     for _finder, module_name, is_pkg in pkgutil.walk_packages(
         path=melody.plugins.__path__,
@@ -102,7 +103,7 @@ def load_plugins():
     ):
         if is_pkg:
             continue  # skip __init__ packages, load leaf modules only
-        if not any(module_name.startswith(prefix) for prefix in allowed_prefixes):
+        if music_only and not module_name.startswith(allowed_prefix):
             continue
         try:
             importlib.import_module(module_name)
@@ -117,7 +118,7 @@ def load_plugins():
         "Plugins loaded: %d OK, %d failed%s",
         loaded,
         failed,
-        " (music-only profile)",
+        " (music-only profile)" if music_only else "",
     )
     return loaded, failed, failed_names
 
@@ -230,69 +231,220 @@ async def register_slash_commands(bot):
         BotCommandScopeChat, BotCommandScopeDefault,
     )
 
-    # Only music playback and VC live-chat commands are exposed.
+    # Commands shown in all groups
     group_commands = [
-        BotCommand("play", "▶️ Play a song from YouTube"),
-        BotCommand("vplay", "📹 Play a video stream"),
-        BotCommand("playforce", "⚡ Force-play now"),
-        BotCommand("vplayforce", "⚡ Force-play video now"),
-        BotCommand("pause", "⏸ Pause playback"),
-        BotCommand("resume", "▶️ Resume playback"),
-        BotCommand("skip", "⏭ Skip current song"),
-        BotCommand("stop", "⏹ Stop music & clear queue"),
-        BotCommand("queue", "📋 Show current queue"),
-        BotCommand("queuepos", "🔢 Show queue position"),
-        BotCommand("np", "🎵 Now playing info"),
-        BotCommand("volume", "🔊 Set volume"),
-        BotCommand("mute", "🔇 Mute playback"),
-        BotCommand("unmute", "🔊 Unmute playback"),
-        BotCommand("loop", "🔂 Loop current song"),
-        BotCommand("loopall", "🔁 Loop entire queue"),
-        BotCommand("noloop", "➡️ Disable loop"),
-        BotCommand("shuffle", "🔀 Shuffle queue"),
-        BotCommand("clearqueue", "🗑 Clear the queue"),
-        BotCommand("remove", "❌ Remove song from queue"),
-        BotCommand("playlist", "📃 Queue a playlist"),
+        BotCommand("play",      "▶️ Play a song from YouTube"),
+        BotCommand("vplay",     "📹 Play a video stream"),
+        BotCommand("pause",     "⏸ Pause playback"),
+        BotCommand("resume",    "▶️ Resume playback"),
+        BotCommand("skip",      "⏭ Skip current song"),
+        BotCommand("stop",      "⏹ Stop music & clear queue"),
+        BotCommand("end",       "⏹ Stop music & clear queue"),
+        BotCommand("queue",     "📋 Show current queue"),
+        BotCommand("np",        "🎵 Now playing info"),
+        BotCommand("volume",    "🔊 Set volume (1-200)"),
+        BotCommand("mute",      "🔇 Mute playback"),
+        BotCommand("unmute",    "🔊 Unmute playback"),
+        BotCommand("loop",      "🔂 Loop current song"),
+        BotCommand("loopall",   "🔁 Loop entire queue"),
+        BotCommand("noloop",    "➡️ Disable loop"),
+        BotCommand("shuffle",   "🔀 Shuffle queue"),
+        BotCommand("clearqueue","🗑 Clear the queue"),
+        BotCommand("remove",    "❌ Remove song from queue"),
+        BotCommand("playforce", "⚡ Force-play now (skips queue)"),
+        BotCommand("vplayforce","⚡ Force-play video now"),
+        BotCommand("playlist",  "📃 Queue an entire playlist"),
+        BotCommand("seek",      "⏩ Seek to position (seconds)"),
+        BotCommand("seekback",  "⏪ Seek backward (seconds)"),
+        BotCommand("speed",     "⚡ Set playback speed (0.5-2.0)"),
+        BotCommand("search",    "🔍 Search YouTube"),
+        BotCommand("dl",        "⬇️ Download song/video as file"),
+        BotCommand("lyrics",    "🎤 Get song lyrics"),
+        BotCommand("autoplay",  "🤖 Toggle autoplay"),
+        BotCommand("auth",      "👑 Authorize a user"),
+        BotCommand("unauth",    "🚫 Remove user authorization"),
+        BotCommand("authlist",  "📋 List authorized users"),
+        BotCommand("ban",       "🔨 Ban user from bot"),
+        BotCommand("unban",     "✅ Unban user"),
+        BotCommand("ping",      "🏓 Check bot latency"),
+        BotCommand("stats",     "📊 Bot statistics"),
+        BotCommand("safemode",  "🛡 Full group lockdown (admins)"),
+        BotCommand("settings",  "🎚 Turn any filter on / off (admins)"),
+        BotCommand("approve",   "✅ Ignore a user in all filters (admins)"),
+        BotCommand("unapprove", "🚫 Stop ignoring a user (admins)"),
+        BotCommand("help",      "📖 Help menu"),
+        # Economy — persistent, non-gambling group game
+        BotCommand("balance",   "🪙 Wallet, bank, level and coins"),
+        BotCommand("daily",     "🎁 Claim daily coin reward"),
+        BotCommand("work",      "💼 Work and earn coins"),
+        BotCommand("deposit",   "🏦 Move wallet coins to bank"),
+        BotCommand("withdraw",  "💳 Move bank coins to wallet"),
+        BotCommand("pay",       "💸 Transfer coins to a user"),
+        BotCommand("leaderboard", "🏆 Top coin players"),
+        BotCommand("economy",   "🪙 Economy command help"),
+        # Social and reaction GIF commands
+        BotCommand("couple",    "💞 Couple a user"),
+        BotCommand("couples",   "💞 Premium couple match"),
+        BotCommand("kiss",      "💋 Send a kiss"),
+        BotCommand("hug",       "🫂 Send a hug"),
+        BotCommand("cuddle",    "🤍 Send a cuddle"),
+        BotCommand("love",      "❤️ Send love"),
+        BotCommand("highfive",  "🙌 High-five a user"),
+        BotCommand("ship",      "💞 Ship two users"),
+        BotCommand("slap",      "👋 Playful slap GIF"),
+        BotCommand("punch",     "👊 Meme punch GIF"),
+        BotCommand("bonk",      "🔨 Bonk a user"),
+        BotCommand("pat",       "🤗 Gentle pat"),
+        BotCommand("poke",      "👉 Poke a user"),
+        BotCommand("wink",      "😉 Send a wink"),
+        BotCommand("dance",     "💃 Dance GIF"),
+        BotCommand("laugh",     "😂 Laugh reaction"),
+        BotCommand("cry",       "😢 Cry reaction"),
+        BotCommand("angry",     "😤 Angry reaction"),
+        BotCommand("cheers",    "🥂 Send cheers"),
+        BotCommand("brofist",   "👊 Bro-fist a user"),
+        BotCommand("clap",      "👏 Clap for a user"),
+        BotCommand("wave",      "👋 Wave to a user"),
+        # Music and channel utilities not in the short core list above
+        BotCommand("playmode",  "🎛 Access and search mode"),
+        BotCommand("queuepos",  "🔢 Show queue position"),
         BotCommand("addplaylist", "➕ Save a playlist"),
         BotCommand("myplaylist", "📃 Show saved playlists"),
         BotCommand("delplaylist", "🗑 Delete a saved playlist"),
         BotCommand("playplaylist", "▶️ Play a saved playlist"),
-        BotCommand("seek", "⏩ Seek playback"),
-        BotCommand("rewind", "⏪ Rewind playback"),
-        BotCommand("speed", "⚡ Set playback speed"),
-        BotCommand("search", "🔍 Search YouTube"),
-        BotCommand("dl", "⬇️ Download audio/video"),
-        BotCommand("playmode", "🎛 Playback mode"),
-        BotCommand("live", "📻 Play a live stream"),
-        BotCommand("radio", "📻 Play radio stream"),
-        BotCommand("replay", "🔄 Replay current stream"),
-        BotCommand("joinvc", "🎧 Join voice chat"),
-        BotCommand("leavevc", "🚪 Leave voice chat"),
-        BotCommand("autoend", "⏹ Auto-end empty voice chat"),
+        BotCommand("live",      "📻 Play a live stream"),
+        BotCommand("radio",     "📻 Play radio stream"),
+        BotCommand("replay",    "🔄 Replay current stream"),
+        BotCommand("channelplay", "📺 Link channel voice chat"),
+        BotCommand("joinvc",    "🎧 Join voice chat"),
+        BotCommand("leavevc",   "🚪 Leave voice chat"),
+        BotCommand("autoend",   "⏹ Auto-end empty voice chat"),
+        BotCommand("vcactivity", "🔔 Voice-chat activity alerts"),
+        # Frequently used group administration
+        BotCommand("adminlist", "👮 List chat admins"),
+        BotCommand("promote",   "⬆️ Promote a member"),
+        BotCommand("demote",    "⬇️ Demote a member"),
+        BotCommand("kick",      "👢 Kick a member"),
+        BotCommand("warn",      "⚠️ Warn a member"),
+        BotCommand("warns",     "📋 Show member warnings"),
+        BotCommand("purge",     "🧹 Purge messages"),
+        BotCommand("pin",       "📌 Pin a message"),
+        BotCommand("unpin",     "📍 Unpin a message"),
+        BotCommand("lock",      "🔒 Lock group"),
+        BotCommand("unlock",    "🔓 Unlock group"),
+        BotCommand("protection", "🛡 Configure protection"),
+        BotCommand("guardinfo", "🛡 Protection status"),
+        BotCommand("tagall",    "📣 Mention group members"),
+        BotCommand("invitelink", "🔗 Get invite link"),
     ]
+
+    # Commands shown when the bot is added as admin in a channel (channel
+    # play). Telegram has no BotCommandScopeAllChannels, so we register
+    # these with the default scope, which channels also fall back to.
     channel_commands = [
-        BotCommand("cplay", "▶️ Play in channel voice chat"),
-        BotCommand("cvplay", "🎬 Play video in channel voice chat"),
-        BotCommand("cpause", "⏸ Pause channel playback"),
-        BotCommand("cresume", "▶️ Resume channel playback"),
-        BotCommand("cskip", "⏭ Skip channel track"),
-        BotCommand("cstop", "⏹ Stop channel playback"),
-        BotCommand("cqueue", "📋 Channel queue"),
-        BotCommand("cnp", "🎵 Channel now playing"),
-        BotCommand("cseek", "⏩ Seek channel playback"),
-        BotCommand("cvolume", "🔊 Channel volume"),
-        BotCommand("cmute", "🔇 Mute channel playback"),
-        BotCommand("cunmute", "🔊 Unmute channel playback"),
-        BotCommand("cshuffle", "🔀 Shuffle channel queue"),
-        BotCommand("cloop", "🔂 Loop channel track"),
+        BotCommand("cplay",     "▶️ Play in this channel's voice chat"),
+        BotCommand("cvplay",    "🎬 Play video in this channel's voice chat"),
+        BotCommand("cpause",    "⏸ Pause (channel)"),
+        BotCommand("cresume",   "▶️ Resume (channel)"),
+        BotCommand("cskip",     "⏭ Skip (channel)"),
+        BotCommand("cstop",     "⏹ Stop (channel)"),
+        BotCommand("cend",      "⏹ Stop (channel)"),
+        BotCommand("cqueue",    "📋 Channel queue"),
+        BotCommand("cnp",       "🎵 Channel now playing"),
+        BotCommand("cseek",     "⏩ Seek channel stream"),
+        BotCommand("cseekback", "⏪ Rewind channel stream"),
+        BotCommand("cspeed",    "⚡ Channel playback speed"),
+        BotCommand("cvolume",   "🔊 Channel volume"),
+        BotCommand("cmute",     "🔇 Mute channel stream"),
+        BotCommand("cunmute",   "🔊 Unmute channel stream"),
+        BotCommand("cshuffle",  "🔀 Shuffle channel queue"),
+        BotCommand("cloop",     "🔂 Loop channel song"),
+        BotCommand("cloopall",  "🔁 Loop channel queue"),
+        BotCommand("cnoloop",   "➡️ Disable channel loop"),
+        BotCommand("help",      "📖 Help menu"),
     ]
+
+    # Public commands available in private chats. Music handlers intentionally
+    # remain group/channel scoped; economy and social commands work in DMs too.
     private_commands = [
-        BotCommand("start", "Start Apex Vibes"),
-        BotCommand("help", "Show music commands"),
+        BotCommand("start",     "🎶 Start Apex Vibes"),
+        BotCommand("help",      "📖 Help & command list"),
+        BotCommand("ping",      "🏓 Check bot latency"),
+        BotCommand("stats",     "📊 Bot statistics"),
+        BotCommand("about",     "ℹ️ About Apex Vibes"),
+        BotCommand("alive",     "💚 Check uptime"),
+        BotCommand("balance",   "🪙 Wallet, bank, level and coins"),
+        BotCommand("daily",     "🎁 Claim daily coin reward"),
+        BotCommand("work",      "💼 Work and earn coins"),
+        BotCommand("deposit",   "🏦 Move wallet coins to bank"),
+        BotCommand("withdraw",  "💳 Move bank coins to wallet"),
+        BotCommand("pay",       "💸 Transfer coins to a user"),
+        BotCommand("leaderboard", "🏆 Top coin players"),
+        BotCommand("economy",   "🪙 Economy command help"),
+        BotCommand("couple",    "💞 Couple a user"),
+        BotCommand("couples",   "💞 Premium couple match"),
+        BotCommand("kiss",      "💋 Send a kiss"),
+        BotCommand("hug",       "🫂 Send a hug"),
+        BotCommand("cuddle",    "🤍 Send a cuddle"),
+        BotCommand("love",      "❤️ Send love"),
+        BotCommand("highfive",  "🙌 High-five a user"),
+        BotCommand("ship",      "💞 Ship two users"),
+        BotCommand("slap",      "👋 Playful slap GIF"),
+        BotCommand("punch",     "👊 Meme punch GIF"),
+        BotCommand("bonk",      "🔨 Bonk a user"),
+        BotCommand("pat",       "🤗 Gentle pat"),
+        BotCommand("poke",      "👉 Poke a user"),
+        BotCommand("wink",      "😉 Send a wink"),
+        BotCommand("dance",     "💃 Dance GIF"),
+        BotCommand("laugh",     "😂 Laugh reaction"),
+        BotCommand("cry",       "😢 Cry reaction"),
+        BotCommand("angry",     "😤 Angry reaction"),
+        BotCommand("cheers",    "🥂 Send cheers"),
+        BotCommand("brofist",   "👊 Bro-fist a user"),
+        BotCommand("clap",      "👏 Clap for a user"),
+        BotCommand("wave",      "👋 Wave to a user"),
+        BotCommand("chat",      "💬 Chat with Apex Vibes AI"),
+        BotCommand("reactions", "🎭 Reaction command help"),
+        BotCommand("piclist",   "🖼 List picture assets"),
     ]
+
     owner_commands = [
-        BotCommand("panel", "Open Apex Vibes owner panel"),
+        BotCommand("panel",     "🛠 Owner control panel"),
+        BotCommand("logs",      "📜 View bot logs"),
+        BotCommand("chatlist",  "👥 List stored chats"),
+        BotCommand("maintenance", "🔧 Maintenance tools"),
+        BotCommand("restart",   "🔄 Restart bot"),
+        BotCommand("reboot",    "♻️ Reboot runtime"),
+        BotCommand("update",    "⬆️ Update bot code"),
+        BotCommand("eval",      "🧪 Run owner evaluation"),
+        BotCommand("shell",     "💻 Run owner shell"),
+        BotCommand("sysinfo",   "📊 System information"),
+        BotCommand("speedtest", "🌐 Network speed test"),
+        BotCommand("logger",    "📝 Logging controls"),
+        BotCommand("emojiid",   "🙂 Inspect custom emoji ID"),
+        BotCommand("setpic",    "🖼 Set start picture"),
+        BotCommand("delpic",    "🗑 Delete start picture"),
+        BotCommand("setwelcomepic", "🖼 Set welcome picture"),
+        BotCommand("delwelcomepic", "🗑 Delete welcome picture"),
+        BotCommand("setsource", "🔗 Set source link"),
+        BotCommand("ocmds",     "📚 Owner command vault"),
     ]
+
+    if Config.MUSIC_ONLY_MODE:
+        music_commands = {
+            "play", "vplay", "pause", "resume", "skip", "stop", "end",
+            "queue", "np", "volume", "mute", "unmute", "loop", "loopall",
+            "noloop", "shuffle", "clearqueue", "remove", "playlist", "seek",
+            "seekback", "speed", "search", "dl", "lyrics", "autoplay",
+        }
+        group_commands = [
+            command for command in group_commands if command.command in music_commands
+        ]
+        channel_commands = [
+            command for command in channel_commands
+            if command.command in {"cplay", "cvplay", "cpause", "cresume", "cskip", "cstop", "cend"}
+        ]
+        private_commands = []
 
     try:
         await bot.set_bot_commands(group_commands, scope=BotCommandScopeAllGroupChats())
@@ -543,21 +695,10 @@ async def main():
     from melody import bot, assistant
     from melody.core.call import recover_playback, start_call_py
 
-    LOGGER.info("Starting 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ...")
+    LOGGER.info("Starting Apex Vibes...")
 
     await bot.start()
-    try:
-        bot_identity = await asyncio.wait_for(bot.get_me(), timeout=8.0)
-        LOGGER.info(
-            "Bot client verified: @%s (connected=%s)",
-            getattr(bot_identity, "username", None) or "unknown",
-            bot.is_connected,
-        )
-    except Exception as exc:
-        LOGGER.critical("Bot client identity check failed after start: %s", exc)
-        await bot.stop()
-        raise
-    LOGGER.info("Bot client started and verified.")
+    LOGGER.info("Bot client started.")
 
     # ─── HEROKU LOG FIX: AUTH_KEY_DUPLICATED crash-loop ──────────────────────
     # Logs showed the dyno dying every ~20 s with:
@@ -653,6 +794,26 @@ async def main():
     # Everything below is secondary startup work.
     # ═══════════════════════════════════════════════════════════════════════
 
+    if not Config.MUSIC_ONLY_MODE:
+        # Premium-emoji resolvers belong to the broad UI surface. The music
+        # profile uses the static icon map and avoids extra startup RPC/tasks.
+        from utils.emoji_map import resolve_emoji_map
+
+        async def _resolve_emoji_map_bg():
+            try:
+                await resolve_emoji_map(bot)
+            except Exception as exc:  # noqa: BLE001 - never block startup
+                LOGGER.warning("Premium emoji map resolution failed: %s", exc)
+
+        spawn(_resolve_emoji_map_bg())
+
+        try:
+            from utils import emoji_search
+
+            emoji_search.start(assistant if assistant_ok else bot)
+        except Exception as exc:  # noqa: BLE001 - never block startup
+            LOGGER.warning("Universal premium-emoji resolver failed to start: %s", exc)
+
     # Re-resolve peers for chats we're already in (see warm_peer_cache docstring).
     # Only the assistant/userbot account can call get_dialogs() — bots always
     # get rejected with "BOT_METHOD_INVALID", so don't waste a call on `bot`.
@@ -722,7 +883,7 @@ async def main():
         await send_startup_log(bot, assistant, loaded, failed, failed_names)
 
     spawn(_finish_secondary_startup(), name="startup-log-sync")
-    LOGGER.info("🎶 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ is live!")
+    LOGGER.info("🎶 Apex Vibes is live!")
     try:
         await asyncio.Event().wait()  # Keep running
     finally:

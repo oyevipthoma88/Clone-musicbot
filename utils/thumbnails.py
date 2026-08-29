@@ -150,9 +150,9 @@ async def get_bot_identity(client) -> tuple[str | None, str]:
     try:
         me = await client.get_me()
         _bot_identity_cache["username"] = me.username
-        _bot_identity_cache["name"] = me.first_name or "Melody"
+        _bot_identity_cache["name"] = me.first_name or "Apex Vibes"
     except Exception:
-        _bot_identity_cache["name"] = "Melody"
+        _bot_identity_cache["name"] = "Apex Vibes"
     return _bot_identity_cache["username"], _bot_identity_cache["name"]
 
 
@@ -465,7 +465,7 @@ def _render_thumbnail_sync(
 
     bot_badge_size = 38
     bot_circle = _circle_crop(
-        bot_img if bot_img else _initials_avatar("Melody", bot_badge_size, "#B8860B"),
+        bot_img if bot_img else _initials_avatar("Apex Vibes", bot_badge_size, "#B8860B"),
         bot_badge_size, ring_color=WHITE, ring_width=2,
     )
     bg.paste(
@@ -479,7 +479,7 @@ def _render_thumbnail_sync(
 
     # ── Watermark ───────────────────────────────────────────────────────
     wm_draw = ImageDraw.Draw(bg)
-    wm_draw.text((PAD, H - PAD // 2 - 10), f"Melody · {owner_name[:18]}", font=font_small, fill=(255, 255, 255, 170))
+    wm_draw.text((PAD, H - PAD // 2 - 10), f"Apex Vibes · {owner_name[:18]}", font=font_small, fill=(255, 255, 255, 170))
 
     # ── Save ──────────────────────────────────────────────────────────────
     out_path = f"/tmp/melody_thumb_{int(time.time() * 1000)}.png"
@@ -622,7 +622,7 @@ def _render_thumbnail_sync_professional(
     bot_circle = _circle_crop(bot_img if bot_img else _initials_avatar("M", 28, "#B8860B"), 28, ring_color=WHITE, ring_width=2)
     bg.paste(bot_circle, (badge_x + 42, badge_y + 42), bot_circle)
 
-    watermark = f"Melody  ·  {owner_name or 'Music bot'}"
+    watermark = f"Apex Vibes  ·  {owner_name or 'Music bot'}"
     draw.text((PAD + 42, H - 36), _truncate_to_width(draw, watermark, font_small, 280), font=font_small, fill=(180, 190, 208, 205))
 
     out_path = f"/tmp/melody_thumb_{int(time.time() * 1000)}.png"

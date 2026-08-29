@@ -58,7 +58,7 @@ class _FloodWaitNoiseFilter(logging.Filter):
 
 logging.getLogger("pyrogram.session.session").addFilter(_FloodWaitNoiseFilter())
 
-LOGGER = logging.getLogger("𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ")
+LOGGER = logging.getLogger("Apex Vibes")
 
 
 _SENSITIVE_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
@@ -155,7 +155,7 @@ async def send_error_log(
         if cmd:
             tags += f" #{str(cmd).lower().replace(' ', '_')}"
         msg = (
-            f"<b>⚠️ {fancy('𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ Error Log')}</b>\n"
+            f"<b>⚠️ {fancy('Apex Vibes Error Log')}</b>\n"
             f"{tags}\n\n<code>{safe_text}</code>"
         )
 

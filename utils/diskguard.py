@@ -43,7 +43,7 @@ import os
 import shutil
 import time
 
-LOGGER = logging.getLogger("Melody")
+LOGGER = logging.getLogger("Apex Vibes")
 
 CACHE_GLOBS = ("/tmp/melody_*_?.*",)
 STAGING_GLOB = "/tmp/melody_dl/*"

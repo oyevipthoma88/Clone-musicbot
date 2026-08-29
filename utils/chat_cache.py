@@ -4,9 +4,9 @@ WHY
 ═══
 The Heroku logs were full of:
 
-    WARNING pyrogram.session.session: [MelodyBot] Waiting for 13 seconds
+    WARNING pyrogram.session.session: [ApexVibesBot] Waiting for 13 seconds
             before continuing (required by "channels.GetFullChannel")
-    WARNING pyrogram.session.session: [MelodyAssistant] Waiting for 3 seconds
+    WARNING pyrogram.session.session: [Apex VibesAssistant] Waiting for 3 seconds
             before continuing (required by "users.GetFullUser")
 
 Those are Telegram FLOOD_WAITs. `get_chat(chat_id)` issues a full

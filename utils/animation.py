@@ -9,7 +9,7 @@ or slows down the actual command.
 ─── WHY THIS FILE IS RATE-LIMITED (Heroku log fix) ──────────────────────────
 The logs were full of:
 
-    WARNING pyrogram.session.session: [MelodyBot] Waiting for 40 seconds
+    WARNING pyrogram.session.session: [ApexVibesBot] Waiting for 40 seconds
     before continuing (required by "messages.EditMessage")
 
 Telegram FloodWait on `messages.EditMessage`. Pyrogram handles a FloodWait by

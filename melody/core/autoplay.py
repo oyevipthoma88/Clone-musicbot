@@ -565,7 +565,7 @@ async def try_autoplay(chat_id: int) -> bool:
                 await bot.send_message(
                     chat_id,
                     f"<blockquote>🎶 <b>AutoPlay ▶️</b> <code>{safe_title}</code>\n"
-                    f"<i>Melody ne sunwaya!</i>\n"
+                    f"<i>Apex Vibes ne sunwaya!</i>\n"
                     f"🙋 Requested by: <i>AutoPlay</i></blockquote>",
                     parse_mode=enums.ParseMode.HTML,
                 )

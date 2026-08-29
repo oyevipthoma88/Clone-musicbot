@@ -2,7 +2,7 @@
 📺 Channel Play — two ways to stream into a channel's voice chat.
 
 1) Directly inside the channel
-   Add Melody to the channel as admin and post <code>/play</code>,
+   Add Apex Vibes to the channel as admin and post <code>/play</code>,
    <code>/vplay</code> or <code>/cplay</code> there — it joins the channel's
    own voice chat and plays. The command post itself is deleted instantly
    (0 sec) so the channel feed stays clean.

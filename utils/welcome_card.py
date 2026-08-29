@@ -1,5 +1,5 @@
 """
-🖼️ Welcome / Goodbye thumbnail generator — Modi–Meloni "Melody" theme.
+🖼️ Welcome / Goodbye thumbnail generator — Modi–Meloni "Apex Vibes" theme.
 
 Renders a 1280×640 card:
   • blurred group photo (or the tri-colour gradient) as the backdrop

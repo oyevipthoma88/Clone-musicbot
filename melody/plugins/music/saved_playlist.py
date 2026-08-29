@@ -2,7 +2,7 @@
 💾 Personal saved playlists — parity with Yukki / AnonXMusic / VIPMusic.
 
 Top music bots let every user keep a private playlist that survives restarts
-and can be queued in any group. Melody had only `/playlist <youtube url>`
+and can be queued in any group. Apex Vibes had only `/playlist <youtube url>`
 (one-shot import), so the whole "save my songs" feature set was missing.
 
 Commands

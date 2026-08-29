@@ -9,7 +9,7 @@ pipeline keeps the tag:
     auto_premium_emoji()  ->  entity_text()  ->  cap_emoji_entities()
 
 This script replays exactly that pipeline over every string literal the bot
-can send, plus the shared Melody theme frame, and reports:
+can send, plus the shared Apex Vibes theme frame, and reports:
 
   * glyphs that come out the other end as PLAIN unicode (the reported bug),
   * ids that can never be valid (not 64-bit, not numeric, quarantine-shaped),
@@ -91,7 +91,7 @@ def theme_samples():
     from utils import melody_theme as theme
 
     yield "utils/melody_theme.py", 0, "", theme.headline("Now Playing", note=True)
-    yield "utils/melody_theme.py", 0, "", theme.card("Melody", theme.FLAGS, theme.rule())
+    yield "utils/melody_theme.py", 0, "", theme.card("Apex Vibes", theme.FLAGS, theme.rule())
     yield "utils/melody_theme.py", 0, "", theme.rule()
     yield "utils/melody_theme.py", 0, "", theme.meter(4)
     yield "utils/melody_theme.py", 0, "", theme.accent(theme.SPARK, "premium")

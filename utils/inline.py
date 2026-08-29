@@ -1,6 +1,6 @@
 """
 🎛 Central inline-keyboard factory (ported from AnonXMusic `helpers/_inline.py`
-and adapted to Melody).
+and adapted to Apex Vibes).
 
 Two things the owner asked for, in one place:
 
@@ -111,7 +111,7 @@ CLOSE_LABEL = deco("close", "Close")
 #  Keyboards
 # ─────────────────────────────────────────────────────────────────────────────
 class Inline:
-    """Melody's inline keyboards (AnonXMusic `Inline` equivalent)."""
+    """Apex Vibes's inline keyboards (AnonXMusic `Inline` equivalent)."""
 
     ikm = InlineKeyboardMarkup
 
@@ -155,7 +155,7 @@ class Inline:
         autoplay_on: bool = False,
         paused: bool = False,
         bot_username: str | None = None,
-        bot_name: str = "Melody",
+        bot_name: str = "Apex Vibes",
     ) -> InlineKeyboardMarkup:
         """Four compact rows aligned beneath the play-card thumbnail."""
         rows: list[list[InlineKeyboardButton]] = list(

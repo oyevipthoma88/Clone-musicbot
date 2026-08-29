@@ -57,7 +57,7 @@ def get_play_buttons(
     chat_title: str,
     autoplay_on: bool = False,
     bot_username: "str | None" = None,
-    bot_name: str = "Melody",
+    bot_name: str = "Apex Vibes",
     chat_type: "enums.ChatType | None" = None,
     chat_id: int = 0,
     paused: bool = False,

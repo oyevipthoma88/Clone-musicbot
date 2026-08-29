@@ -1040,7 +1040,7 @@ def _local_media_stream(chat_id: int, filepath: str, video: bool, seconds: int =
 
 
 
-# ROOT-CAUSE FIX (⚠️ Melody Error Log: "_stream_track failed" ->
+# ROOT-CAUSE FIX (⚠️ Apex Vibes Error Log: "_stream_track failed" ->
 # json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
 # ... during handling ... ProcessLookupError in ffmpeg.py check_stream):
 #
@@ -1838,7 +1838,7 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
         except Exception:
             pass
 
-        # ROOT-CAUSE FIX (⚠️ Melody Error Log: ChannelInvalid / PeerIdInvalid
+        # ROOT-CAUSE FIX (⚠️ Apex Vibes Error Log: ChannelInvalid / PeerIdInvalid
         # / ChannelPrivate — "_stream_track failed"): joining a Telegram
         # group/voice-chat call happens over the ASSISTANT (userbot) account,
         # not the bot account. MTProto requires the calling account to
@@ -1911,7 +1911,7 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
             )
             return
 
-        # ROOT-CAUSE FIX (⚠️ Melody Error Log: ChannelInvalid / PeerIdInvalid
+        # ROOT-CAUSE FIX (⚠️ Apex Vibes Error Log: ChannelInvalid / PeerIdInvalid
         # / ChannelPrivate — "_stream_track failed"): joining a Telegram
         # group/voice-chat call happens over the ASSISTANT (userbot) account,
         # not the bot account. MTProto requires the calling account to
@@ -1959,7 +1959,7 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 return
             await _notify_playback_failed(
                 chat_id,
-                "⚠️ <b>Melody ka voice-assistant account is group mein nahi hai, aur auto-join bhi fail ho gaya.</b>\n\n"
+                "⚠️ <b>Apex Vibes ka voice-assistant account is group mein nahi hai, aur auto-join bhi fail ho gaya.</b>\n\n"
                 "Voice chat me gaana bajane ke liye assistant account ka bhi is group ka "
                 "member hona zaroori hai. Please assistant ko group mein manually add karo "
                 "(ya bot ko 'Invite Users via Link' admin permission do) aur phir se "
@@ -2125,7 +2125,7 @@ async def _unban_or_unmute_assistant(chat_id: int) -> str:
 
 async def _ask_for_unban(chat_id: int, assistant_id: int) -> None:
     """REQUESTED: when the assistant is BANNED in a group and the bot itself
-    has no ban/unban rights, don't fail silently — tell the group that Melody
+    has no ban/unban rights, don't fail silently — tell the group that Apex Vibes
     needs "Ban Users" permission (then it unbans the assistant itself and
     joins the voice chat automatically), and give them the ready-made manual
     command as well: /unban <numeric id>."""
@@ -2156,7 +2156,7 @@ async def _auto_join_assistant(chat_id: int) -> bool:
     Also auto-fixes the far more common cause of the assistant "not being
     in the group": it WAS a member but got banned or muted at some point
     (e.g. an over-eager anti-raid bot, or a leftover restriction from
-    before Melody was even added) — see _unban_or_unmute_assistant().
+    before Apex Vibes was even added) — see _unban_or_unmute_assistant().
 
     Requires the BOT to already be a member with "invite users via link"
     permission (true for any group where /play works at all, since that's

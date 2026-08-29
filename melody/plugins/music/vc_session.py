@@ -7,7 +7,7 @@ Missing before this module:
   /userbotleave (/leavevc)  → assistant ko VC se nikalo
   /autoend on|off           → VC me koi na bache to stream khud band
 
-Autoend is the one every top bot ships and Melody had no equivalent of: if
+Autoend is the one every top bot ships and Apex Vibes had no equivalent of: if
 everyone leaves the voice chat the stream used to keep running (and keep
 burning bandwidth) until an admin noticed. The watcher below polls the roster
 of chats that are actually streaming and stops playback after two consecutive

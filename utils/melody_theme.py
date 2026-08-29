@@ -1,5 +1,5 @@
 """
-🎨 Modi–Meloni "Melody" theme — the ONE place every card in the bot is styled.
+🎨 Modi–Meloni "Apex Vibes" theme — the ONE place every card in the bot is styled.
 
 WHY THIS EXISTS
 ---------------
@@ -14,7 +14,7 @@ re-exports of it, so ONE edit here restyles every card in the bot.
 THEME
 -----
 India 🇮🇳 and Italy 🇮🇹 share the same tricolour family — saffron / white /
-green — so the ribbon 🧡🤍💚 is the signature of every Melody card, framed
+green — so the ribbon 🧡🤍💚 is the signature of every Apex Vibes card, framed
 with Telegram blockquotes and the project's bold-italic `fancy()` headline
 font.
 
@@ -57,7 +57,7 @@ def headline(title: str, note: bool = False) -> str:
 
 
 def card(title: str, body: str, footer: str = "", tags: str = "") -> str:
-    """Standard Melody card: ribbon headline · optional tags · body · footer."""
+    """Standard Apex Vibes card: ribbon headline · optional tags · body · footer."""
     text = headline(title)
     if tags:
         text += f"\n{tags}"

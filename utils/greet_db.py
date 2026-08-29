@@ -12,7 +12,7 @@ Keys
 welcome        bool  — send a welcome when someone joins            (default on)
 welcome_text   str   — custom text with {placeholders}              (None = theme default)
 welcome_media  str   — Telegram file_id of a custom welcome photo   (None = generated card)
-welcome_card   bool  — render the generated Melody thumbnail        (default on)
+welcome_card   bool  — render the generated Apex Vibes thumbnail        (default on)
 clean_welcome  bool  — delete the previous welcome card             (default on)
 clean_service  bool  — delete Telegram's "X joined" service message (default off)
 last_welcome   int   — message id of the last welcome card (internal)
@@ -84,7 +84,7 @@ async def unset_greet(chat_id: int, keys: list[str]) -> None:
 
 
 async def reset_greet(chat_id: int, kind: str = "all") -> None:
-    """kind: 'welcome' | 'goodbye' | 'all' — back to the Melody defaults."""
+    """kind: 'welcome' | 'goodbye' | 'all' — back to the Apex Vibes defaults."""
     if kind == "welcome":
         keys = ["welcome_text", "welcome_media", "welcome_card", "clean_welcome",
                 "clean_service", "welcome", "last_welcome"]

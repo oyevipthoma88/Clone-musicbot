@@ -1,4 +1,4 @@
-"""Persistent economy state for Melody's lightweight group game.
+"""Persistent economy state for Apex Vibes's lightweight group game.
 
 The economy is intentionally non-gambling: users earn coins through daily and
 work actions, can move coins between wallet and bank, transfer them to another

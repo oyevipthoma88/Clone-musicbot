@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-📱 Termux premium-emoji harvester for Melody.
+📱 Termux premium-emoji harvester for Apex Vibes.
 
 WHAT IT DOES
 ------------
@@ -21,7 +21,7 @@ USAGE IN TERMUX
 ---------------
     pkg update -y && pkg install -y python git
     pip install -U pyrofork tgcrypto
-    git clone <your Melody repo> && cd Melody_music
+    git clone <your Apex Vibes repo> && cd Apex Vibes_music
     export API_ID=123456 API_HASH=xxxxxxxxxxxxxxxx
     python tools/termux_emoji_harvest.py --channel OrderEmoji
 
@@ -153,7 +153,7 @@ def render(mapping: dict[str, list[str]], sources: str) -> str:
 
 
 async def main() -> int:
-    parser = argparse.ArgumentParser(description="Harvest premium emoji ids for Melody")
+    parser = argparse.ArgumentParser(description="Harvest premium emoji ids for Apex Vibes")
     parser.add_argument("--channel", action="append", default=None,
                         help="channel username or id (repeatable). Default: OrderEmoji")
     parser.add_argument("--limit", type=int, default=0,

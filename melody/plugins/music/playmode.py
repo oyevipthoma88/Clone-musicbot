@@ -2,7 +2,7 @@
 🎛 /playmode — who can play, and how results are picked.
 
 MISSING-FEATURE PARITY: every top music bot (Yukki, AnonXMusic, VIPMusic,
-TgMusicBot) ships /playmode. Melody hard-coded BOTH halves of it:
+TgMusicBot) ships /playmode. Apex Vibes hard-coded BOTH halves of it:
 
   • access — /play was permanently admin/auth-only, so in a normal group no
     member could ever queue a song. Top bots default to "everyone" and let

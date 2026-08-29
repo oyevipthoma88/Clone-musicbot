@@ -15,7 +15,7 @@ from utils.formatters import quote_html
 @admin_or_auth
 async def loop_cmd(client: Client, message: Message):
     # PARITY: top bots accept `/loop enable|disable` (and a plain number) as
-    # well as the bare command. Melody only understood the bare form, so
+    # well as the bare command. Apex Vibes only understood the bare form, so
     # people copying commands from other bots got no loop at all.
     arg = message.command[1].lower() if len(message.command) > 1 else ""
     if arg in ("disable", "off", "0", "end", "stop"):

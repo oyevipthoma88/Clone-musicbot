@@ -1,4 +1,4 @@
-# Melody Music — Audit Status
+# Apex Vibes — Audit Status
 
 ## ✅ This pass — every printed glyph is premium (Modi–Meloni theme deepened)
 
@@ -181,15 +181,11 @@ _Last updated: this audit pass._
 
 ## ✅ Done in this pass
 
-### 1. Gemini / AI chatbot modernised
-- New `melody/core/genai.py`: prefix-agnostic Gemini client.
   - Auto-detects credential type — classic API keys go out as `x-goog-api-key`,
     OAuth-style tokens (`AQ...`, `ya29...`) as `Authorization: Bearer`.
   - The old code hard-rejected anything not starting with `AIza`; that
     assumption is gone. No key is hardcoded — everything comes from env.
-  - Lazy model discovery: if `CHATBOT_MODEL` (default `gemini-2.5-flash`)
     404s, the client lists available models and picks a working one.
-- `melody/plugins/misc/chatbot.py` rewired to the new client; legacy
   `_clean_ai_key()` validation removed.
 
 ### 2. VC "bot rejoins after /stop" race — root cause fixed
@@ -250,7 +246,6 @@ still called `play()` and **re-joined** the voice chat.
 | 6 | Test coverage | The suite covers regressions and secret hygiene only; the call/queue state machine has no unit tests. |
 
 ## 🔒 Notes
-- No secrets are committed. All credentials (bot token, Mongo URI, Gemini key,
   session strings) come from environment variables / Heroku config vars.
 - The upstream repository owner and URL are intentionally kept out of the
   source; a regression test asserts this.
@@ -259,7 +254,6 @@ still called `play()` and **re-joined** the voice chat.
 
 Verified-already-fixed (left untouched): VC join/left/activity feed wiring in
 `melody/core/call.py` → `melody/core/vc_notify.py`, VC start/end "who did it"
-mentions, join-request notify + external-resolution logging, Gemini
 prefix-agnostic client, Source Code button + owner Set/Remove/Current URL,
 owner-only menu gating in `/start` and `/help`, Mongo + GitHub pic persistence.
 

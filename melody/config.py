@@ -116,10 +116,16 @@ class Config:
     # key hits its daily quota (403 quotaExceeded).
     YOUTUBE_API_KEY: str = _env_str("YOUTUBE_API_KEY") or _env_str("YT_API_KEY")
 
+    # Lyrics
+    GENIUS_API_TOKEN: str = _env_str("GENIUS_API_TOKEN")
+
     # Bot settings
-    # No song-duration cap: 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ plays full songs, mixes, even long live
+    # No song-duration cap: Apex Vibes plays full songs, mixes, even long live
     # sets, with no artificial cutoff anywhere in the codebase.
     AUTOPLAY: bool = _env_bool("AUTOPLAY", True)
+    # Optional lean profile: load only music plugins and skip unrelated admin,
+    # social and utility handlers. Full Apex Vibes remains the default.
+    MUSIC_ONLY_MODE: bool = _env_bool("MUSIC_ONLY_MODE", False)
     BOT_USERNAME: str = _env_str("BOT_USERNAME").lstrip("@")
     # Welcome animated sticker (file_id of any Telegram sticker/animation)
     # Set in .env: WELCOME_STICKER=<file_id>

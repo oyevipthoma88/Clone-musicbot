@@ -25,10 +25,10 @@ def _mongo_target(uri: str) -> str:
         return "<invalid>"
 
 
-logging.getLogger("Melody").info(
+logging.getLogger("Apex Vibes").info(
     "Mongo runtime target: %s (database=%s)",
     _mongo_target(_mongo_uri),
-    "MelodyDB",
+    "Apex VibesDB",
 )
 
 # SPEED FIX ("cmnd bohot slow response deti hai"): the default Motor client
@@ -45,7 +45,7 @@ client = motor.motor_asyncio.AsyncIOMotorClient(
     retryWrites=True,
     compressors="zlib",
 )
-db = client["MelodyDB"]
+db = client["Apex VibesDB"]
 
 # Collections
 chats_col = db["chats"]
@@ -239,7 +239,7 @@ async def get_stats() -> dict:
 # ─── Lists (gban / botban / blacklisted chats) ───────────────────────────────
 # Top music bots (Yukki / AnonXMusic / VIPMusic) all expose the *list* form of
 # every global action — /gbannedusers, /blockedusers, /blacklistedchats — but
-# Melody only had the add/remove half, so an owner could gban someone and then
+# Apex Vibes only had the add/remove half, so an owner could gban someone and then
 # have no way to audit or undo it without remembering the id. These read the
 # same collections the existing setters already write to.
 
