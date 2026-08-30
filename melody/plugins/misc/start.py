@@ -1,19 +1,20 @@
 """Apex Vibes start menu: music, VC live chat, and Owner Panel only."""
 from pyrogram import Client, filters, enums
-from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.types import Message, InlineKeyboardMarkup, CallbackQuery
 from melody import bot
 from melody.config import Config
 from utils.decorators import error_handler
+from utils.buttons import ikb, STYLE_PRIMARY, STYLE_SUCCESS, STYLE_DANGER
 
 
 def _menu(owner: bool = False):
     rows = [
-        [InlineKeyboardButton("▶️ Play Music", switch_inline_query_current_chat=""),
-         InlineKeyboardButton("🎛 Music Controls", callback_data="apex_music_help")],
-        [InlineKeyboardButton("🎧 Voice Chat", callback_data="apex_vc_help")],
+        [ikb("▶️ Play Music", style=STYLE_SUCCESS, switch_inline_query_current_chat=""),
+         ikb("🎛 Music Controls", style=STYLE_PRIMARY, callback_data="apex_music_help")],
+        [ikb("🎧 Voice Chat", style=STYLE_PRIMARY, callback_data="apex_vc_help")],
     ]
     if owner:
-        rows.append([InlineKeyboardButton("👑 Owner Panel", callback_data="owner_panel")])
+        rows.append([ikb("👑 Owner Panel", style=STYLE_DANGER, callback_data="owner_panel")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -42,7 +43,7 @@ _VC_HELP = (
 
 
 def _back():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("↩ Back", callback_data="apex_start_home")]])
+    return InlineKeyboardMarkup([[ikb("↩ Back", style=STYLE_PRIMARY, callback_data="apex_start_home")]])
 
 
 @bot.on_message(filters.command("start") & filters.private)
