@@ -1288,6 +1288,49 @@ async def search_youtube(query: str, limit: int = 5) -> list[dict]:
         return []
 
 
+async def find_playable_candidate(query: str, exclude_video_id: str = "", want_video: bool = False) -> dict | None:
+    """Return the first alternate search result with a working media source.
+
+    Search metadata is not proof that an item is playable: deleted, private,
+    age-gated, or region-blocked videos can still appear in API/InnerTube
+    results. Only alternate candidates are validated, using the cheap direct
+    resolver rather than a full download, so the normal fast path is unchanged.
+    """
+    if not query or query.strip().lower().startswith(("http://", "https://")):
+        return None
+    try:
+        candidates = await asyncio.wait_for(search_youtube(query, limit=5), timeout=4.0)
+    except Exception as exc:
+        LOGGER.debug("alternate search failed for %r: %s", query[:60], exc)
+        return None
+
+    for candidate in candidates:
+        video_id = candidate.get("id", "")
+        if not video_id or video_id == exclude_video_id:
+            continue
+        try:
+            resolved = await asyncio.wait_for(
+                resolve_stream_urls(video_id, want_video=want_video), timeout=3.5
+            )
+            if not resolved:
+                continue
+            result = dict(candidate)
+            result["stream_url"] = (
+                resolved.get("audio") or resolved.get("video") or
+                resolved.get("url") or resolved.get("audio_url") or
+                resolved.get("video_url") or ""
+            )
+            result["webpage_url"] = result.get("url") or f"https://www.youtube.com/watch?v={video_id}"
+            LOGGER.info(
+                "♻️ Replaced unavailable result %s with playable candidate %s",
+                exclude_video_id, video_id,
+            )
+            return result
+        except Exception as exc:
+            LOGGER.info("Skipping unplayable alternate %s: %s", video_id, exc)
+    return None
+
+
 async def get_playlist_entries(url_or_query: str, limit: int = 50) -> list[dict]:
     """Extract lightweight metadata for every entry in a YouTube playlist URL.
 

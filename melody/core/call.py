@@ -1864,6 +1864,43 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
         # left the VC stuck. Now the chat gets a one-line note and the bot
         # simply moves on to the next song.
         if _is_unavailable_media_error(exc):
+            # A search hit can have valid metadata while its actual media is
+            # deleted/private/region-blocked. Before abandoning the request,
+            # validate the next search candidates and replay the same Track.
+            # This is deliberately one-shot: if all alternates fail, normal
+            # queue/autoplay handling below takes over without recursion.
+            source_query = getattr(track, "source_query", "") or ""
+            if source_query and not getattr(track, "_alternate_attempted", False):
+                setattr(track, "_alternate_attempted", True)
+                try:
+                    from melody.core.ytdl import find_playable_candidate
+                    alternate = await find_playable_candidate(
+                        source_query,
+                        exclude_video_id=getattr(track, "video_id", ""),
+                        want_video=video,
+                    )
+                except Exception as alternate_exc:
+                    alternate = None
+                    LOGGER.info("alternate candidate recovery failed: %s", alternate_exc)
+                if alternate:
+                    old_id = track.video_id
+                    track.video_id = alternate["id"]
+                    track.title = alternate.get("title", track.title)
+                    track.duration = int(alternate.get("duration") or 0)
+                    track.stream_url = alternate.get("stream_url", "")
+                    track.thumbnail = alternate.get("thumbnail", track.thumbnail)
+                    track.uploader = alternate.get("uploader", track.uploader)
+                    LOGGER.info(
+                        "Retrying playback with alternate candidate old=%s new=%s chat=%s",
+                        old_id, track.video_id, chat_id,
+                    )
+                    started = await _stream_track(
+                        chat_id, track, video=video, _retry=True,
+                        start_at=start_at, gen=gen, priority=priority,
+                    )
+                    if started:
+                        return started
+
             LOGGER.info("Skipping unavailable track %s in %s", getattr(track, "video_id", "?"), chat_id)
             title = html_escape((getattr(track, "title", "") or "Ye gaana")[:50])
             await _notify_playback_failed(

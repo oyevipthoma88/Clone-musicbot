@@ -409,6 +409,7 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
             # itself so the video intent survives queuing / auto-advance /
             # loop-single instead of silently reverting to audio-only.
             video=video,
+            source_query=query if query and not tagged and not query.lower().startswith(("http://", "https://")) else "",
         )
 
         # Audio-first handoff: the real MediaStream creates/joins the VC and
@@ -436,7 +437,8 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
             await processing.edit(
                 quote_html(
                     "❌ <b>Gana play nahi ho paya.</b>\n"
-                    "VC permissions ya assistant session check karke dobara try karo."
+                    "YouTube stream unavailable ho sakti hai ya VC handoff complete nahi hua.\n"
+                    "VC permissions tabhi check karo jab VC-related message aaye."
                 ),
                 parse_mode=enums.ParseMode.HTML,
             )

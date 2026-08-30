@@ -36,6 +36,9 @@ class Track:
     # Storing the intent on the Track itself makes it survive being queued,
     # popped, looped, or replayed by AutoPlay.
     video: bool = False
+    # Original text query, retained so a failed top YouTube hit can be replaced
+    # with the next streamable candidate without losing the user's intent.
+    source_query: str = ""
 
 
 # In-memory per-chat state
