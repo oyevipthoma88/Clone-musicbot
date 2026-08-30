@@ -1099,11 +1099,10 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     #   • the tv / web_safari clients still advertise plain https formats that
     #     need no PO token at all, so keep them in the client list as backup.
     extractor_args: dict = {
-        # Android-VR is the most reliable cloud profile in our Heroku matrix:
-        # it exposes ordinary HTTPS audio URLs more often than WEB/SABR. Keep
-        # TV/iOS/Safari as fallbacks so a client-specific block never removes
-        # playback entirely.
-        "player_client": ["android_vr", "tv", "ios", "web_safari"],
+        # Android Music and Android-VR expose ordinary HTTPS audio URLs more
+        # often than WEB/SABR on Heroku. Keep TV/iOS/Safari as fallbacks so a
+        # client-specific block never removes playback entirely.
+        "player_client": ["android_music", "android_vr", "tv", "ios", "web_safari"],
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
         # listing are never used by playback but cost a round-trip each.
