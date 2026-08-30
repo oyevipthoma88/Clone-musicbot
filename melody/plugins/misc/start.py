@@ -1,10 +1,13 @@
-"""Apex Vibes start menu: music, VC live chat, and Owner Panel only."""
+"""Apex Vibes start menu and lifecycle logging."""
+import html
 from pyrogram import Client, filters, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, CallbackQuery
 from melody import bot
 from melody.config import Config
 from utils.decorators import error_handler
 from utils.buttons import ikb, STYLE_PRIMARY, STYLE_SUCCESS, STYLE_DANGER
+from melody.logging import log_activity
+from utils.tasks import spawn
 
 
 def _menu(owner: bool = False):
@@ -49,14 +52,43 @@ def _back():
 @bot.on_message(filters.command("start") & filters.private)
 @error_handler
 async def start_dm(client: Client, message: Message):
+    user = message.from_user
+    if user:
+        spawn(log_activity(
+            f"#start #dm\n<b>DM /start</b>\n"
+            f"• User: <code>{html.escape(user.first_name or 'Unknown')}</code>"
+            f" (@{html.escape(user.username or '—')})\n"
+            f"• User ID: <code>{user.id}</code>"
+        ), name=f"log-dm-start-{user.id}")
     await message.reply(_START, parse_mode=enums.ParseMode.HTML,
-                        reply_markup=_menu(bool(message.from_user and message.from_user.id == Config.OWNER_ID)))
+                        reply_markup=_menu(bool(user and user.id == Config.OWNER_ID)))
 
 
 @bot.on_message(filters.command("start") & filters.group)
 @error_handler
 async def start_group(client: Client, message: Message):
     await message.reply(_START, parse_mode=enums.ParseMode.HTML, reply_markup=_menu(False))
+
+
+@bot.on_message(filters.new_chat_members)
+@error_handler
+async def bot_added_to_group(client: Client, message: Message):
+    """Log only the event where this bot itself is added to a group."""
+    me = await client.get_me()
+    members = message.new_chat_members or []
+    if not any(member.id == me.id for member in members):
+        return
+    adder = message.from_user
+    group = message.chat
+    adder_name = html.escape(adder.first_name if adder else "Unknown")
+    group_name = html.escape(group.title or str(group.id))
+    spawn(log_activity(
+        f"#group_added #newchat\n<b>Apex Vibes added to group</b>\n"
+        f"• Group: <code>{group_name}</code>\n"
+        f"• Group ID: <code>{group.id}</code>\n"
+        f"• Added by: <code>{adder_name}</code>\n"
+        f"• Added by ID: <code>{adder.id if adder else '—'}</code>"
+    ), name=f"log-group-added-{group.id}")
 
 
 @bot.on_message(filters.command("help"))
