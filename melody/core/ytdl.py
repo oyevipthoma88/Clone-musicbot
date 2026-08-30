@@ -1099,11 +1099,11 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     #   • the tv / web_safari clients still advertise plain https formats that
     #     need no PO token at all, so keep them in the client list as backup.
     extractor_args: dict = {
-        # Upstream reports confirm WEB can expose SABR-only formats without
-        # ordinary HTTPS URLs. Prefer TV/iOS clients for direct media URLs;
-        # keep web_safari as a last compatible fallback instead of letting the
-        # default expansion select WEB first on cloud hosts.
-        "player_client": ["tv", "ios", "web_safari"],
+        # Android-VR is the most reliable cloud profile in our Heroku matrix:
+        # it exposes ordinary HTTPS audio URLs more often than WEB/SABR. Keep
+        # TV/iOS/Safari as fallbacks so a client-specific block never removes
+        # playback entirely.
+        "player_client": ["android_vr", "tv", "ios", "web_safari"],
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
         # listing are never used by playback but cost a round-trip each.
