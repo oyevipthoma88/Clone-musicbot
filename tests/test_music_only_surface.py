@@ -28,5 +28,11 @@ def test_audio_play_uses_parallel_vc_prejoin():
     assert 'if not video:' in text
 
 
+def test_direct_stream_is_default_fast_path_with_opt_out():
+    text = (ROOT / 'melody/core/ytdl.py').read_text()
+    assert 'os.getenv("DIRECT_STREAM", "true")' in text
+    assert 'direct CDN + download fallback race enabled' in text
+
+
 def test_app_json_is_valid():
     json.loads((ROOT / 'app.json').read_text())

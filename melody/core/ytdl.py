@@ -767,10 +767,10 @@ COOKIES_FILE = "/tmp/melody_yt_cookies.txt"
 # proof that direct streaming could never work and therefore forced every
 # first play to wait for a complete download. Runtime evidence showed metadata
 # + VC join completed in 0.79s while the user still heard 10-20s of silence.
-# Normal YouTube playback is download-first: the audio early-handoff starts
-# playback as soon as a validated prefix exists, while the complete file is
-# cached for the next skip. DIRECT_STREAM=true is an explicit opt-in for hosts
-# whose CDN route is known to be reliable. Raw live HLS URLs remain direct.
+# Normal YouTube playback races the direct CDN URL against the audio download:
+# a working CDN starts in seconds, while the download remains a safe fallback.
+# DIRECT_STREAM=false is an explicit opt-out for hosts whose CDN route is blocked.
+# Raw live HLS URLs remain direct regardless of this switch.
 _ON_CLOUD_HOST: bool = bool(
     os.environ.get("DYNO")                    # Heroku
     or os.environ.get("RAILWAY_ENVIRONMENT")  # Railway
@@ -780,11 +780,13 @@ _ON_CLOUD_HOST: bool = bool(
     or os.environ.get("WEBSITE_INSTANCE_ID")  # Azure App Service
 )
 if _ON_CLOUD_HOST:
-    LOGGER.info("☁️  Cloud host detected — download-first audio handoff enabled")
-
+    LOGGER.info("☁️  Cloud host detected — direct CDN + download fallback race enabled")
 
 def should_try_direct_stream() -> bool:
-    return os.getenv("DIRECT_STREAM", "false").strip().lower() not in {
+    # Direct stream is the fastest path. If a cloud CDN route rejects it,
+    # _stream_track already keeps the download fallback running in parallel.
+    return os.getenv("DIRECT_STREAM", "true").strip().lower() not in {
+
         "0", "false", "no", "off",
     }
 
@@ -2314,8 +2316,7 @@ def cached_file_path(video_id: str, audio_only: bool = True) -> "str | None":
 
 
 def on_cloud_host() -> bool:
-    """True on Heroku/Railway/Render/Fly/Cloud Run/Azure, where the YouTube
-    CDN is IP-blocked and direct-URL streaming can never succeed."""
+    """True on Heroku/Railway/Render/Fly/Cloud Run/Azure."""
     return _ON_CLOUD_HOST
 # Hard ceiling on how long we wait for that early-handoff threshold before
 # giving up and blocking on the full download instead (pure fallback).
