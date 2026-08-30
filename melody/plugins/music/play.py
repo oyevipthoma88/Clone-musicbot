@@ -40,6 +40,7 @@ from melody.core.call import (
     force_play_stream,
     abort_prejoin_if_idle,
     ensure_assistant_peer,
+    pre_join,
 )
 from melody.logging import log_activity
 from utils.database import add_history
@@ -208,10 +209,13 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
     def _lap() -> float:
         return round(_time.monotonic() - _t0, 2)
 
-    # Start peer validation at the same instant as metadata search. The helper
-    # is single-flight, so _stream_track later reuses this task instead of
-    # issuing a duplicate Telegram RPC.
+    # Start peer validation and the audio-only optimistic VC pre-join at the
+    # same instant as metadata search. Both helpers are idempotent/single-flight;
+    # _stream_track reuses the ready peer and swaps real audio into the silence
+    # call instead of waiting to create the VC after YouTube resolves.
     spawn(ensure_assistant_peer(chat.id), name=f"peer-ready-{chat.id}")
+    if not video:
+        spawn(pre_join(chat.id), name=f"vc-prejoin-{chat.id}")
 
     # ⚡ SPEED FIX: the "Getting your vibe ready..." reply is a full Telegram
     # round-trip and it used to be AWAITED before the VC join and the search
@@ -219,9 +223,8 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
     # join, the profile-photo fetches, the status message AND the search all
     # start in the same instant now; the status message is only awaited later,
     # when we actually need to edit or delete it.
-    # Audio-first policy: the real MediaStream creates/joins the VC. A
-    # speculative silence pre-join can hold the per-chat play lock without
-    # producing music, so it is intentionally omitted for this command.
+    # Audio-first policy is retained for video requests; audio requests use the
+    # parallel silence pre-join above so the real MediaStream only swaps in.
     bot_dp_task = asyncio.create_task(get_bot_dp(client))
     user_dp_task = asyncio.create_task(fetch_dp(client, requester_id))
 

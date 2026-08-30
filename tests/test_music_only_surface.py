@@ -22,5 +22,11 @@ def test_start_and_help_contain_only_music_vc_owner_surface():
         assert required in combined
 
 
+def test_audio_play_uses_parallel_vc_prejoin():
+    text = (ROOT / 'melody/plugins/music/play.py').read_text()
+    assert 'spawn(pre_join(chat.id)' in text
+    assert 'if not video:' in text
+
+
 def test_app_json_is_valid():
     json.loads((ROOT / 'app.json').read_text())
