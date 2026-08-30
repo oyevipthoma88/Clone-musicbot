@@ -313,39 +313,6 @@ async def noop_callback(client: Client, cb: CallbackQuery):
     await cb.answer()
 
 
-@bot.on_callback_query(filters.regex("^lyrics$"))
-@error_handler
-async def lyrics_callback(client: Client, cb: CallbackQuery):
-    await cb.answer("🎵 Fetching lyrics...")
-    track = get_current(cb.message.chat.id)
-    if not track:
-        await send_quote(cb.message, "❌ Nothing is playing right now.", client=client)
-        return
-
-    try:
-        import lyricsgenius
-        from melody.config import Config
-        if not Config.GENIUS_API_TOKEN:
-            await send_quote(cb.message, "⚠️ Genius API token not configured.", client=client)
-            return
-
-        genius = lyricsgenius.Genius(Config.GENIUS_API_TOKEN, verbose=False, remove_section_headers=True)
-        import asyncio as _asyncio
-        loop = _asyncio.get_running_loop()
-        song = await loop.run_in_executor(IO_POOL, lambda: genius.search_song(track.title, track.uploader))
-        if song and song.lyrics:
-            safe_title = html.escape(track.title)
-            lyrics_text = html.escape(song.lyrics[:3500])
-            await send_quote(
-                cb.message,
-                f"🎵 <b>{safe_title}</b>\n\n<blockquote expandable>{lyrics_text}</blockquote>",
-                client=client,
-            )
-        else:
-            await send_quote(cb.message, "❌ Lyrics not found.", client=client)
-    except Exception:
-        await send_quote(cb.message, "❌ Could not fetch lyrics.", client=client)
-
 
 # ─── AnonXMusic-style unified `controls <action> <chat_id>` router ────────────
 #

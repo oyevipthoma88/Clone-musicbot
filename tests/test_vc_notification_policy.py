@@ -138,8 +138,8 @@ def test_hidden_group_owner_is_never_revealed():
     view = _read("utils/owner_view.py")
     assert "def is_anonymous_member(" in view
     assert "HIDDEN" in view
-    gc = _read("melody/plugins/admin/gcmanage.py")
-    assert "owner_label(" in gc
+    # Group Management is intentionally removed; owner privacy remains
+    # enforced centrally by utils/owner_view.py.
 
 
 # ─── log-noise / flood regressions (from the worker log dump) ────────────────
