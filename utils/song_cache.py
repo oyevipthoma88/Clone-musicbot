@@ -67,7 +67,7 @@ def _target(video_id: str, video: bool) -> str:
 
 async def remember_song(video_id: str, video: bool, file_id: str) -> None:
     """Remember a Telegram-hosted completed media file by its stable file ID."""
-    if not song_cache_col or not video_id or not file_id:
+    if song_cache_col is None or not video_id or not file_id:
         return
     try:
         await song_cache_col.update_one(
@@ -88,7 +88,7 @@ async def remember_song(video_id: str, video: bool, file_id: str) -> None:
 
 async def restore_song(client, video_id: str, video: bool) -> str | None:
     """Restore a cached Telegram file atomically into ytdl's discoverable path."""
-    if not song_cache_col or not client or not video_id:
+    if song_cache_col is None or not client or not video_id:
         return None
     target = _target(video_id, video)
     partial = f"{target}.restore.part"
@@ -134,7 +134,7 @@ async def restore_song(client, video_id: str, video: bool) -> str | None:
 async def remember_completed_file(video_id: str, video: bool, filepath: str) -> bool:
     """Upload a complete local file to GridFS and index its resulting file ID."""
     bucket = _get_gridfs_bucket()
-    if not bucket or not song_cache_col or not filepath or not os.path.isfile(filepath):
+    if bucket is None or song_cache_col is None or not filepath or not os.path.isfile(filepath):
         return False
     filename = f"melody_{_safe_video_id(video_id)}_{_tag(video)}.cache"
     upload = None
@@ -176,7 +176,7 @@ async def remember_completed_file(video_id: str, video: bool, filepath: str) -> 
 
 async def ensure_indexes() -> None:
     """Create the lookup index when Mongo is available; never block startup."""
-    if not song_cache_col:
+    if song_cache_col is None:
         return
     try:
         await song_cache_col.create_index(
