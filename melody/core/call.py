@@ -60,12 +60,14 @@ except Exception:  # noqa: BLE001
 if _IS_CLOUD_RUNTIME:
     _DOWNLOAD_START_DELAY = 0.0
 
-# How long py-tgcalls' internal ffprobe gets to open a direct CDN URL before
-# we give up on it and fall back to the (much slower) full download.
+# How long py-tgcalls gets to open a direct CDN URL before we give up on it.
+# Cloud googlevideo routes can pass the reachability probe and still need 6–10s
+# for the first media response; the old 4s watchdog caused valid direct streams
+# to be discarded and replaced by a full download.
 try:
-    _PLAY_PROBE_TIMEOUT = max(1.0, float(os.getenv("PLAY_PROBE_TIMEOUT", "4")))
-except Exception:  # noqa: BLE001
-    _PLAY_PROBE_TIMEOUT = 4.0
+    _PLAY_PROBE_TIMEOUT = max(2.0, float(os.getenv("PLAY_PROBE_TIMEOUT", "10")))
+except Exception:
+    _PLAY_PROBE_TIMEOUT = 10.0
 try:
     _LOCAL_PROXY_PLAY_TIMEOUT = max(
         _PLAY_PROBE_TIMEOUT,
