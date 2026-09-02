@@ -1104,7 +1104,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # often than WEB/SABR on Heroku. Keep TV/iOS/Safari as fallbacks so a
         # client-specific block never removes playback entirely.
         # web_safari provides cloud-safe HLS; default/iOS remain fallbacks.
-        "player_client": ["web_safari", "default", "ios"],
+        "player_client": ["web_safari", "android_vr", "default", "ios"],
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
         # listing are never used by playback but cost a round-trip each.

@@ -69,7 +69,7 @@ def test_cdn_probe_prefers_curl_cffi_with_urllib_fallback():
 
 def test_youtube_client_policy_keeps_cloud_direct_fallback_order():
     source = _source("melody/core/ytdl.py")
-    assert '"player_client": ["web_safari", "default", "ios"]' in source
+    assert '"player_client": ["web_safari", "android_vr", "default", "ios"]' in source
     assert '"client": client_name' in source
     assert '"User-Agent": ua' in source
 
