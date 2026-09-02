@@ -4653,7 +4653,9 @@ def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
     return picked
 
 
-async def resolve_stream_urls(video_id: str, want_video: bool = False) -> dict:
+async def resolve_stream_urls(
+    video_id: str, want_video: bool = False, *, force: bool = False,
+) -> dict:
     """Resolve direct CDN URLs to stream from, without downloading anything.
 
     Returns {"video": url|None, "audio": url, "headers": {...}, "is_live": bool}.
@@ -4680,7 +4682,7 @@ async def resolve_stream_urls(video_id: str, want_video: bool = False) -> dict:
         LOGGER.debug("⚡ stream-url cache HIT for %s", key)
         return cached
     failure_until = _stream_url_failures.get(key, 0.0)
-    if failure_until > _time_mod.monotonic():
+    if not force and failure_until > _time_mod.monotonic():
         raise ValueError("direct stream temporarily unavailable (cached failure)")
     if failure_until:
         _stream_url_failures.pop(key, None)
@@ -4691,7 +4693,7 @@ async def resolve_stream_urls(video_id: str, want_video: bool = False) -> dict:
         if cached and cached.get("expires_at", 0) > _time_mod.time():
             return cached
         failure_until = _stream_url_failures.get(key, 0.0)
-        if failure_until > _time_mod.monotonic():
+        if not force and failure_until > _time_mod.monotonic():
             raise ValueError("direct stream temporarily unavailable (cached failure)")
         if failure_until:
             _stream_url_failures.pop(key, None)

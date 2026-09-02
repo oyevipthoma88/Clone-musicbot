@@ -923,7 +923,12 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
                 "headers": {},
             }
         else:
-            urls = await resolve_stream_urls(track.video_id, want_video=video)
+            # Playback is authoritative: a warm probe may have cached a
+            # transient client/CDN failure while the alternate client is now
+            # usable. Retry one fresh direct resolve before downloading.
+            urls = await resolve_stream_urls(
+                track.video_id, want_video=video, force=True,
+            )
     except Exception as exc:
         LOGGER.info(
             "#stream direct-stream unavailable for %s (%s) — falling back to download",
