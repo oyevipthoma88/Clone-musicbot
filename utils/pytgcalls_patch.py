@@ -362,6 +362,10 @@ def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) 
         # installed curl_cffi transport first; retain urllib as a dependency-free
         # fallback for non-YouTube hosts and minimal installations.
         if curl_requests is not None:
+            # curl_cffi matches the TLS fingerprint used by the resolver and
+            # is the only transport worth waiting for on YouTube CDN URLs.
+            # Do not immediately repeat the same probe through urllib: that
+            # doubled the worst-case gate before ffmpeg could start.
             try:
                 resp = curl_requests.get(
                     url,
@@ -377,7 +381,7 @@ def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) 
                 finally:
                     resp.close()
             except Exception:
-                pass
+                continue
         req = Request(url, method="GET", headers=request_headers)
         try:
             with urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed CDN url
