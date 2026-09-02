@@ -61,6 +61,15 @@ def test_remote_probe_preserves_stream_headers():
     assert "_remote_reachable(path, stream_headers)" in source
 
 
+def test_fresh_play_resets_stale_speed_state():
+    call_source = _source("melody/core/call.py")
+    play_source = _source("melody/plugins/music/play.py")
+    search_source = _source("melody/plugins/music/search.py")
+    assert "def reset_playback_speed(chat_id: int)" in call_source
+    assert "reset_playback_speed(chat.id)" in play_source
+    assert "reset_playback_speed(chat.id)" in search_source
+
+
 def test_playback_uses_warm_direct_cache_before_forced_retry():
     source = _source("melody/core/call.py")
     assert "force=False" in source

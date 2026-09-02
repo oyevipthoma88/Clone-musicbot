@@ -996,6 +996,16 @@ def get_speed(chat_id: int) -> float:
     return float(_speed.get(chat_id, 1.0))
 
 
+def reset_playback_speed(chat_id: int) -> None:
+    """Start a fresh user-requested track at normal speed.
+
+    Speed changes are runtime controls, not persistent room settings. Clearing
+    the previous value prevents a stale `/speed 2` state from making the next
+    unrelated track begin at 2× after queue/stream handoff.
+    """
+    _speed.pop(chat_id, None)
+
+
 def _ffmpeg_params(
     chat_id: int,
     seconds: int = 0,

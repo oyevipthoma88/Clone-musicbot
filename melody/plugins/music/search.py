@@ -47,7 +47,9 @@ async def search_cmd(client: Client, message: Message):
 async def play_search_cb(client: Client, cb):
     from melody.core.ytdl import get_video_info, resolve_stream_urls
     from melody.core.queue import set_last_user_track, Track
-    from melody.core.call import play_stream, ensure_assistant_peer, pre_join
+    from melody.core.call import (
+        play_stream, ensure_assistant_peer, pre_join, reset_playback_speed,
+    )
     from utils.formatters import format_duration
     from utils.database import add_history
     from utils.decorators import cb_playmode_gate
@@ -62,6 +64,7 @@ async def play_search_cb(client: Client, cb):
         return
 
     video_id = cb.data.split("play_search_")[1]
+    reset_playback_speed(chat.id)
     await cb.answer("🎵 Loading...")
 
     # Search selections used to start direct resolution only after metadata

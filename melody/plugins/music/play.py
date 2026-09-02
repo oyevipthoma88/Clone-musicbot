@@ -41,6 +41,7 @@ from melody.core.call import (
     abort_prejoin_if_idle,
     ensure_assistant_peer,
     pre_join,
+    reset_playback_speed,
 )
 from melody.logging import log_activity
 from utils.database import add_history
@@ -100,6 +101,9 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
     query = " ".join(message.command[1:]) if len(message.command) > 1 else None
     chat = stream_chat or message.chat
     user = message.from_user
+
+    # A fresh user request must never inherit a stale `/speed 2` state.
+    reset_playback_speed(chat.id)
 
     # 🏷 Tag-to-play: reply /play or /vplay to any audio/video/voice message
     # (or an audio/video document) to stream that exact file — no text query
