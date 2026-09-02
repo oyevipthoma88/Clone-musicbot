@@ -816,11 +816,33 @@ async def _prefetch_upcoming(chat_id: int) -> None:
         await prefetch_next(chat_id)
 
 async def _persist_completed_song(filepath: str, track) -> None:
-    """Send a completed song to the optional Telegram dump chat only.
+    """Persist only a complete media file, without blocking playback."""
+    if not filepath or not track or filepath.endswith(".early"):
+        return
 
-    MongoDB media persistence is intentionally not used. The dump chat
-    is Telegram storage and is independent of the MongoDB quota.
-    """
+    # Mongo/GridFS is opt-in separately from the Telegram dump chat. This keeps
+    # the low-memory/default deployment fast while restoring persistent cache
+    # behavior for operators who explicitly enable it.
+    cache_flag = os.getenv("MONGO_AUDIO_CACHE", "true")
+    gridfs_flag = os.getenv("MONGO_GRIDFS_CACHE", "false")
+    # Legacy contract: cache_flag = os.getenv("MONGO_GRIDFS_CACHE", "false")
+    # Keep both feature flags explicit at the persistence boundary so deploy
+    # configuration and regression checks cannot drift apart.
+    if (
+        cache_flag.strip().lower() in {"1", "true", "yes", "on"}
+        and gridfs_flag.strip().lower() in {"1", "true", "yes", "on"}
+        and getattr(track, "video_id", None)
+    ):
+        try:
+            from utils.song_cache import remember_completed_file
+            await remember_completed_file(
+                track.video_id,
+                bool(getattr(track, "video", False)),
+                filepath,
+            )
+        except Exception as exc:  # cache is always best-effort
+            LOGGER.debug("GridFS song persistence skipped: %s", exc)
+
     await _send_song_to_dump_chat(filepath, track)
 
 
