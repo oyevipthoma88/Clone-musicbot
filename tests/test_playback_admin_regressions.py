@@ -60,6 +60,13 @@ def test_remote_probe_preserves_stream_headers():
     assert "_remote_reachable(path, stream_headers)" in source
 
 
+def test_remote_probe_validates_media_body_not_only_status():
+    source = _source("utils/pytgcalls_patch.py")
+    assert "actual bytes from a ranged media GET" in source
+    assert "next(resp.iter_content(chunk_size=2), b\"\")" in source
+    assert "bool(resp.read(2))" in source
+
+
 def test_cdn_probe_prefers_curl_cffi_with_urllib_fallback():
     source = _source("utils/pytgcalls_patch.py")
     assert "from curl_cffi import requests as curl_requests" in source

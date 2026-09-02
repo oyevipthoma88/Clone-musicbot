@@ -292,7 +292,12 @@ _remote_probe_disabled = False
 
 
 def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) -> bool:
-    """True when the CDN answers a 1-byte ranged GET with a success status.
+    """True when the CDN returns actual bytes from a ranged media GET.
+
+    Checking only the HTTP status accepted URLs whose headers arrived but whose
+    media body then stalled; PyTgCalls timed out later and wasted the whole
+    direct-play window. Reading a tiny payload here makes the probe validate
+    the same data path that FFmpeg will consume.
 
     ROOT CAUSE of the "10 second silence before the song starts":
     py-tgcalls pre-probes every source with `ffprobe`. On this host ffprobe
@@ -364,7 +369,8 @@ def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) 
                 )
                 try:
                     if 200 <= int(resp.status_code) < 400:
-                        return True
+                        first_bytes = next(resp.iter_content(chunk_size=2), b"")
+                        return bool(first_bytes)
                 finally:
                     resp.close()
             except Exception:
@@ -373,7 +379,7 @@ def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) 
         try:
             with urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed CDN url
                 if 200 <= getattr(resp, "status", 200) < 400:
-                    return True
+                    return bool(resp.read(2))
         except Exception:
             continue
     return False
