@@ -354,6 +354,9 @@ def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) 
         # while trying the inferred client UA variants above as fallbacks.
         if supplied.get("Referer"):
             request_headers["Referer"] = supplied["Referer"]
+        for header_name in ("Origin", "Cookie"):
+            if supplied.get(header_name):
+                request_headers[header_name] = supplied[header_name]
         # urllib is frequently rejected by YouTube’s CDN even when the same
         # URL works with the Chrome TLS fingerprint used by yt-dlp. Prefer the
         # installed curl_cffi transport first; retain urllib as a dependency-free

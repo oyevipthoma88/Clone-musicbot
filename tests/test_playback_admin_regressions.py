@@ -57,6 +57,7 @@ def test_remote_probe_preserves_stream_headers():
     source = _source("utils/pytgcalls_patch.py")
     assert "def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None)" in source
     assert "supplied.get(\"Referer\")" in source
+    assert 'for header_name in ("Origin", "Cookie")' in source
     assert "_remote_reachable(path, stream_headers)" in source
 
 
@@ -85,6 +86,7 @@ def test_ytdlp_direct_resolver_preserves_format_headers():
     source = _source("melody/core/ytdl.py")
     assert 'resolved_headers = dict((info or {}).get("http_headers") or {})' in source
     assert 'fmt_info.get("http_headers")' in source
+    assert '"Origin", "Cookie"' in source
 
 
 def test_audio_resolver_can_prefer_hls_manifest_before_muxed_fallback():

@@ -4148,11 +4148,11 @@ def _resolve_stream_urls_innertube(video_id: str, want_video: bool) -> dict:
     picked["headers"] = {
         k: v
         for k, v in ((info or {}).get("headers") or {}).items()
-        if k in ("User-Agent", "Referer")
+        if k in ("User-Agent", "Referer", "Origin", "Cookie")
     } or {
         k: v
         for k, v in (_ydl_opts().get("http_headers") or {}).items()
-        if k in ("User-Agent", "Referer")
+        if k in ("User-Agent", "Referer", "Origin", "Cookie")
     }
     urls = [u for u in (picked.get("video"), picked.get("audio")) if u]
     picked["expires_at"] = min(_url_expiry(u) for u in urls) - _STREAM_URL_SAFETY_MARGIN
@@ -4656,7 +4656,7 @@ def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
     picked["headers"] = {
         k: v
         for k, v in (resolved_headers or _ydl_opts().get("http_headers") or {}).items()
-        if k in ("User-Agent", "Referer")
+        if k in ("User-Agent", "Referer", "Origin", "Cookie")
     }
     picked["expires_at"] = min(_url_expiry(u) for u in urls) - _STREAM_URL_SAFETY_MARGIN
     return picked
