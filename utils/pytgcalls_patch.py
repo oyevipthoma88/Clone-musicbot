@@ -287,7 +287,26 @@ def _is_missing_binary(exc: "BaseException | None") -> bool:
     return "no such file or directory" in text and "ffprobe" in text
 
 
-_REMOTE_CHECK_TIMEOUT = float(os.getenv("REMOTE_CHECK_TIMEOUT", "2.5"))
+try:
+    _REMOTE_CHECK_TIMEOUT = max(0.25, float(os.getenv("REMOTE_CHECK_TIMEOUT", "2.5")))
+except (TypeError, ValueError):
+    _REMOTE_CHECK_TIMEOUT = 2.5
+# On Heroku/Railway/Render/Fly, a slow probe must not consume the 5-second
+# playback budget. Keep the operator setting for local/non-cloud deployments.
+_IS_CLOUD = bool(
+    os.getenv("DYNO")
+    or os.getenv("RAILWAY_ENVIRONMENT")
+    or os.getenv("RENDER_SERVICE_ID")
+    or os.getenv("FLY_APP_NAME")
+)
+try:
+    _cloud_budget = max(0.25, float(os.getenv("REMOTE_CHECK_CLOUD_BUDGET", "0.9")))
+except (TypeError, ValueError):
+    _cloud_budget = 0.9
+_REMOTE_CHECK_BUDGET = min(
+    _REMOTE_CHECK_TIMEOUT,
+    _cloud_budget if _IS_CLOUD else _REMOTE_CHECK_TIMEOUT,
+)
 _remote_probe_disabled = False
 
 
@@ -402,9 +421,9 @@ async def _remote_reachable(url: str, headers: dict | None = None) -> bool:
         from melody.core.pools import IO_POOL
         return await asyncio.wait_for(
             loop.run_in_executor(
-                IO_POOL, _http_reachable_sync, url, _REMOTE_CHECK_TIMEOUT, headers
+                IO_POOL, _http_reachable_sync, url, _REMOTE_CHECK_BUDGET, headers
             ),
-            timeout=_REMOTE_CHECK_TIMEOUT + 1.0,
+            timeout=_REMOTE_CHECK_BUDGET + 0.25,
         )
     except Exception:
         return False

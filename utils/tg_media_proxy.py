@@ -23,7 +23,10 @@ from melody.logging import LOGGER
 _CHUNK_BYTES = 1024 * 1024
 _MAX_PROXIES = 64
 _PROXY_TTL = 6 * 3600.0
-_PROXY_CONCURRENCY = 4
+try:
+    _PROXY_CONCURRENCY = max(1, int(os.getenv("TG_PROXY_CONCURRENCY", "4")))
+except (TypeError, ValueError):
+    _PROXY_CONCURRENCY = 4
 
 
 @dataclass
@@ -140,6 +143,10 @@ async def _media_handler(request: web.Request) -> web.StreamResponse:
                     continue
                 piece = chunk[:remaining]
                 await response.write(piece)
+                # A long movie can run for hours. Refresh activity after every
+                # chunk so the bounded registry never prunes a live stream
+                # while a new user registers another movie.
+                entry.touched = time.monotonic()
                 remaining -= len(piece)
                 if remaining <= 0:
                     break
