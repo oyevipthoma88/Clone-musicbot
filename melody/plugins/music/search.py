@@ -45,12 +45,13 @@ async def search_cmd(client: Client, message: Message):
 @bot.on_callback_query(filters.regex(r"^play_search_(.+)$"))
 @error_handler
 async def play_search_cb(client: Client, cb):
-    from melody.core.ytdl import get_video_info
+    from melody.core.ytdl import get_video_info, resolve_stream_urls
     from melody.core.queue import set_last_user_track, Track
-    from melody.core.call import play_stream
+    from melody.core.call import play_stream, ensure_assistant_peer, pre_join
     from utils.formatters import format_duration
     from utils.database import add_history
     from utils.decorators import cb_playmode_gate
+    from utils.tasks import spawn
 
     chat = cb.message.chat
     user = cb.from_user
@@ -63,7 +64,29 @@ async def play_search_cb(client: Client, cb):
     video_id = cb.data.split("play_search_")[1]
     await cb.answer("🎵 Loading...")
 
+    # Search selections used to start direct resolution only after metadata
+    # finished, leaving the first playback path with a 4–8s cold resolve.
+    # Start both cheap preparations immediately; resolve_stream_urls has a
+    # single-flight cache, so play_stream reuses the result instead of doing a
+    # second network request.
+    import asyncio
+    warm_stream = asyncio.create_task(
+        resolve_stream_urls(video_id, want_video=False),
+        name=f"search-direct-warm-{video_id}",
+    )
+    spawn(ensure_assistant_peer(chat.id), name=f"search-peer-ready-{chat.id}")
+    spawn(pre_join(chat.id), name=f"search-prejoin-{chat.id}")
+
     info = await get_video_info(f"https://www.youtube.com/watch?v={video_id}")
+    if not warm_stream.done():
+        # Metadata is normally faster than extraction; do not block the UI on
+        # the warm task, but let an already-finished result settle cleanly.
+        await asyncio.sleep(0)
+    try:
+        await warm_stream
+    except Exception:
+        # play_stream owns the bounded direct/download fallback.
+        pass
     if not info:
         await cb.answer("❌ Could not load song.", show_alert=True)
         return
