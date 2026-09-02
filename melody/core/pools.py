@@ -43,19 +43,19 @@ _MEMORY_LIMIT_MB = _memory_limit_mb()
 # explicitly raise these values, but hard caps prevent accidental 32/64-thread
 # explosions when a host reports its physical CPU count instead of its dyno
 # quota.
-_DEFAULT_YTDL_WORKERS = 4 if _MEMORY_LIMIT_MB <= 768 else 8
-_DEFAULT_IO_WORKERS = 2 if _MEMORY_LIMIT_MB <= 768 else 4
+_DEFAULT_YTDL_WORKERS = 2 if _MEMORY_LIMIT_MB <= 1024 else 4
+_DEFAULT_IO_WORKERS = 1 if _MEMORY_LIMIT_MB <= 1024 else 2
 _requested_ytdl_workers = _env_int("YTDL_WORKERS", _DEFAULT_YTDL_WORKERS)
 _requested_io_workers = _env_int("IO_WORKERS", _DEFAULT_IO_WORKERS)
 YTDL_WORKERS = (
     _DEFAULT_YTDL_WORKERS
-    if _MEMORY_LIMIT_MB <= 768
-    else min(8, _requested_ytdl_workers)
+    if _MEMORY_LIMIT_MB <= 1024
+    else min(4, _requested_ytdl_workers)
 )
 IO_WORKERS = (
     _DEFAULT_IO_WORKERS
-    if _MEMORY_LIMIT_MB <= 768
-    else min(4, _requested_io_workers)
+    if _MEMORY_LIMIT_MB <= 1024
+    else min(2, _requested_io_workers)
 )
 
 # A Python thread normally reserves an 8 MB stack.  A 512 KB stack is enough

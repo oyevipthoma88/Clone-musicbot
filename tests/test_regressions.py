@@ -73,8 +73,8 @@ def test_stream_url_cache_is_bounded():
 def test_heroku_memory_defaults_are_conservative():
     pools = Path("melody/core/pools.py").read_text()
     player = Path("melody/core/call.py").read_text()
-    assert '_DEFAULT_YTDL_WORKERS = 4 if _MEMORY_LIMIT_MB <= 768 else 8' in pools
-    assert '_DEFAULT_IO_WORKERS = 2 if _MEMORY_LIMIT_MB <= 768 else 4' in pools
+    assert '_DEFAULT_YTDL_WORKERS = 2 if _MEMORY_LIMIT_MB <= 1024 else 4' in pools
+    assert '_DEFAULT_IO_WORKERS = 1 if _MEMORY_LIMIT_MB <= 1024 else 2' in pools
     assert 'YTDL_WORKERS = (' in pools
     assert 'IO_WORKERS = (' in pools
     assert 'os.getenv("SONG_CACHE_MB", "96")' in player
@@ -424,8 +424,8 @@ def test_playback_fallback_is_lazy_and_memory_bounded():
     assert "_DEFAULT_CONCURRENT_DOWNLOADS = 1 if _MEMORY_BUDGET_MB <= 1024 else 2" in ytdl
     assert "1 if _MEMORY_BUDGET_MB <= 1024 else min(2, _requested_downloads)" in ytdl
     assert "ytdlp_future = None" in ytdl
-    assert "workers=_worker_count(\"BOT_WORKERS\", 8, 16)" in init
-    assert "workers=_worker_count(\"ASSISTANT_WORKERS\", 4, 8)" in init
+    assert 'workers=_worker_count("BOT_WORKERS", 4, 8)' in init
+    assert 'workers=_worker_count("ASSISTANT_WORKERS", 2, 4)' in init
     assert "threading.stack_size(512 * 1024)" in pools
 
 
