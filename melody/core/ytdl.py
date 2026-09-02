@@ -4619,9 +4619,14 @@ def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
     if not picked and info.get("url"):
         # A few extractor clients return a single playable URL at the top
         # level without a populated `formats` array. Reuse it rather than
-        # needlessly falling back to a full download.
+        # needlessly falling back to a full download. This includes HLS-only
+        # responses, which are valid progressive sources for ffmpeg.
         proto = str(info.get("protocol") or "")
-        if proto.startswith("http") and "m3u8" not in proto and "dash" not in proto:
+        top_url = str(info["url"])
+        top_url_path = top_url.split("?", 1)[0].lower()
+        top_level_hls = "m3u8" in proto or top_url_path.endswith(".m3u8")
+        top_level_http = proto.startswith("http") and "dash" not in proto
+        if top_level_http or top_level_hls:
             picked = {"video": info["url"], "audio": info["url"]} if want_video else {"audio": info["url"], "video": None}
     if not picked:
         safe_target_id = _extract_video_id(target) or "unknown"

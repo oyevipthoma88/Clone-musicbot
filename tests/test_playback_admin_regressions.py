@@ -113,6 +113,13 @@ def test_direct_picker_accepts_hls_and_top_level_playable_urls():
     assert 'proto.startswith("http")' in source
 
 
+def test_direct_resolver_accepts_top_level_hls_url():
+    source = _source("melody/core/ytdl.py")
+    assert 'top_level_hls = "m3u8" in proto or top_url_path.endswith(".m3u8")' in source
+    assert 'if top_level_http or top_level_hls:' in source
+    assert 'valid progressive sources for ffmpeg' in source
+
+
 def test_cloud_playback_uses_audio_only_early_handoff_and_keeps_video_safe():
     source = _source("melody/core/ytdl.py")
     assert '_EARLY_HANDOFF_ENABLED = _env_flag("EARLY_HANDOFF", False) and not _ON_CLOUD_HOST' in source
