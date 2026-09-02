@@ -925,12 +925,22 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
                 "headers": {},
             }
         else:
-            # Playback is authoritative: a warm probe may have cached a
-            # transient client/CDN failure while the alternate client is now
-            # usable. Retry one fresh direct resolve before downloading.
-            urls = await resolve_stream_urls(
-                track.video_id, want_video=video, force=True,
-            )
+            # Consume the warmed direct URL first. The old code always used
+            # force=True here, throwing away the warm resolver result and
+            # adding 4–8 seconds to every cold/queued playback. Only retry
+            # with a fresh resolve when the cache is actually missing/stale.
+            try:
+                urls = await resolve_stream_urls(
+                    track.video_id, want_video=video, force=False,
+                )
+            except Exception as cached_exc:
+                LOGGER.debug(
+                    "cached direct resolve unavailable for %s (%s); retrying fresh",
+                    track.video_id, cached_exc,
+                )
+                urls = await resolve_stream_urls(
+                    track.video_id, want_video=video, force=True,
+                )
     except Exception as exc:
         LOGGER.info(
             "#stream direct-stream unavailable for %s (%s) — falling back to download",
@@ -1524,7 +1534,7 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                     from melody.core.ytdl import is_download_cancelled
                     if is_download_cancelled(exc):
                         download_cancelled = True
-                        LOGGER.info(
+                        LOGGER.debug(
                             "#download intentional cancellation chat=%s video=%s",
                             chat_id, track.video_id,
                         )

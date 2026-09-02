@@ -61,6 +61,13 @@ def test_remote_probe_preserves_stream_headers():
     assert "_remote_reachable(path, stream_headers)" in source
 
 
+def test_playback_uses_warm_direct_cache_before_forced_retry():
+    source = _source("melody/core/call.py")
+    assert "force=False" in source
+    assert "cached direct resolve unavailable" in source
+    assert "force=True" in source
+
+
 def test_remote_probe_validates_media_body_not_only_status():
     source = _source("utils/pytgcalls_patch.py")
     assert "actual bytes from a ranged media GET" in source
