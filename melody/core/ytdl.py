@@ -33,16 +33,20 @@ import zipfile
 # executor was the real cause of the 10-15s wait before playback started.
 from melody.core.pools import YTDL_POOL
 
-# SPEED FIX: the direct-CDN URL race used to be allowed 25s. Nobody waits 25s
-# for a song — if neither yt-dlp nor InnerTube has answered in this window the
-# download fallback is already the faster route. Tunable via env.
+# Direct URL extraction can need a few seconds on cloud hosts while the
+# cookie-authenticated yt-dlp client waits for the warm PO-token provider. The
+# old 3.5s budget expired immediately after InnerTube failed, so a valid yt-dlp
+# direct URL was canceled and playback always downloaded the complete track.
+# Keep the budget configurable, but give the authenticated fallback enough time
+# to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "3.5"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "10.0"))
 except ValueError:
-    _RESOLVE_TIMEOUT = 3.5
+    _RESOLVE_TIMEOUT = 10.0
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
-# fallback is started as well (see resolve_stream_urls).
+# fallback is started as well (see resolve_stream_urls). The yt-dlp task then
+# remains alive until the absolute resolve deadline, even when InnerTube fails.
 try:
     _INNERTUBE_HEADSTART = float(os.getenv("INNERTUBE_HEADSTART", "0.35"))
 except Exception:  # noqa: BLE001

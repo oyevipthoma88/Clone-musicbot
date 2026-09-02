@@ -120,6 +120,14 @@ def test_direct_resolver_accepts_top_level_hls_url():
     assert 'valid progressive sources for ffmpeg' in source
 
 
+def test_direct_resolver_allows_authenticated_yt_dlp_fallback_time():
+    source = _source("melody/core/ytdl.py")
+    assert 'os.getenv("RESOLVE_TIMEOUT", "10.0")' in source
+    assert 'valid yt-dlp' in source
+    assert 'direct URL was canceled' in source
+    assert 'until the absolute resolve deadline' in source
+
+
 def test_cloud_playback_uses_audio_only_early_handoff_and_keeps_video_safe():
     source = _source("melody/core/ytdl.py")
     assert '_EARLY_HANDOFF_ENABLED = _env_flag("EARLY_HANDOFF", False) and not _ON_CLOUD_HOST' in source
