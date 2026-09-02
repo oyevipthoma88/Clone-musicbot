@@ -2267,9 +2267,11 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # before playback could start. 512 KB is still ~30 s of playback buffer (the
 # writer stays far ahead of the 1x-realtime reader, so no premature EOF) but
 # lands on disk in well under a second.
-_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 512_000)
+# 256 KB is a safe audio prefix (~16 seconds at 128 kbps) and reaches
+# PyTgCalls quickly even on a busy 1-CPU dyno.
+_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 256_000)
 # Minimum share of the total file that must be on disk before handing off.
-_EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.15)
+_EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.10)
 # BUG FIX ("3 ghante ki movie download hone tak wait karta hai"): the ratio
 # above is only sane for small files. A percentage of a multi-GB movie is
 # itself gigabytes — waiting for 35% of a 3 GB file means buffering ~1 GB
