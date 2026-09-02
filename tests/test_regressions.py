@@ -421,8 +421,8 @@ def test_playback_fallback_is_lazy_and_memory_bounded():
     ytdl = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     init = (ROOT / "melody/__init__.py").read_text(encoding="utf-8")
     pools = (ROOT / "melody/core/pools.py").read_text(encoding="utf-8")
-    assert "_DEFAULT_CONCURRENT_DOWNLOADS = 1 if _MEMORY_BUDGET_MB <= 768 else 2" in ytdl
-    assert "1 if _MEMORY_BUDGET_MB <= 768 else min(2, _requested_downloads)" in ytdl
+    assert "_DEFAULT_CONCURRENT_DOWNLOADS = 1 if _MEMORY_BUDGET_MB <= 1024 else 2" in ytdl
+    assert "1 if _MEMORY_BUDGET_MB <= 1024 else min(2, _requested_downloads)" in ytdl
     assert "ytdlp_future = None" in ytdl
     assert "workers=_worker_count(\"BOT_WORKERS\", 8, 16)" in init
     assert "workers=_worker_count(\"ASSISTANT_WORKERS\", 4, 8)" in init
@@ -448,7 +448,7 @@ def test_small_dyno_hard_caps_ignore_stale_high_config_vars():
     ytdl = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     init = (ROOT / "melody/__init__.py").read_text(encoding="utf-8")
     assert "if _MEMORY_LIMIT_MB <= 768" in pools
-    assert "1 if _MEMORY_BUDGET_MB <= 768 else min(2, _requested_downloads)" in ytdl
+    assert "1 if _MEMORY_BUDGET_MB <= 1024 else min(2, _requested_downloads)" in ytdl
     assert "hard_max = default if _CLIENT_MEMORY_LIMIT_MB <= 768 else maximum" in init
 
 

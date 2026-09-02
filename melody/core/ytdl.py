@@ -462,7 +462,8 @@ def _memory_budget_mb() -> int:
 
 
 _MEMORY_BUDGET_MB = _memory_budget_mb()
-_DEFAULT_CONCURRENT_DOWNLOADS = 1 if _MEMORY_BUDGET_MB <= 768 else 2
+# Keep one yt-dlp working set on 1 GB dynos to avoid Heroku R14.
+_DEFAULT_CONCURRENT_DOWNLOADS = 1 if _MEMORY_BUDGET_MB <= 1024 else 2
 try:
     _requested_downloads = max(
         1, int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "") or _DEFAULT_CONCURRENT_DOWNLOADS)
@@ -470,7 +471,7 @@ try:
 except ValueError:
     _requested_downloads = _DEFAULT_CONCURRENT_DOWNLOADS
 _MAX_CONCURRENT_DOWNLOADS = (
-    1 if _MEMORY_BUDGET_MB <= 768 else min(2, _requested_downloads)
+    1 if _MEMORY_BUDGET_MB <= 1024 else min(2, _requested_downloads)
 )
 _download_slots: "_PriorityDownloadGate | None" = None
 def _download_semaphore() -> "_PriorityDownloadGate":
@@ -1102,7 +1103,8 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # Android Music and Android-VR expose ordinary HTTPS audio URLs more
         # often than WEB/SABR on Heroku. Keep TV/iOS/Safari as fallbacks so a
         # client-specific block never removes playback entirely.
-        "player_client": ["android_music", "android_vr", "tv", "ios", "web_safari"],
+        # web_safari provides cloud-safe HLS; default/iOS remain fallbacks.
+        "player_client": ["web_safari", "default", "ios"],
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
         # listing are never used by playback but cost a round-trip each.
@@ -2485,7 +2487,7 @@ _PERMANENT_DOWNLOAD_MARKERS = (
     "not available in your country",
     "this video is drm protected",
     "drm protected",
-    "requested format is not available",
+    # Format availability is client/rung-specific; keep it retryable.
     "only images are available",
     "only storyboards are available",
 )

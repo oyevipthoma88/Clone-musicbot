@@ -42,12 +42,13 @@ def test_fast_path_does_not_cancel_unstarted_ytdlp_future():
     assert "_meta_cache_put(cache_key, result)" in source
 
 
-def test_permanent_youtube_download_errors_skip_retry_ladder():
+def test_client_specific_format_errors_continue_retry_ladder():
     source = _source("melody/core/ytdl.py")
     assert "_PERMANENT_DOWNLOAD_MARKERS" in source
     assert "no video formats found" in source
     assert "drm protected" in source
-    assert "requested format is not available" in source
+    assert '"requested format is not available"' not in source
+    assert "Format availability is client/rung-specific" in source
     assert "_is_permanent_download_error(exc)" in source
     assert "skipping remaining fallback clients" in source
 
@@ -66,9 +67,9 @@ def test_cdn_probe_prefers_curl_cffi_with_urllib_fallback():
     assert "retain urllib as a dependency-free" in source
 
 
-def test_youtube_client_policy_avoids_web_first_sabr_selection():
+def test_youtube_client_policy_keeps_cloud_direct_fallback_order():
     source = _source("melody/core/ytdl.py")
-    assert '"player_client": ["tv", "ios", "web_safari"]' in source
+    assert '"player_client": ["web_safari", "default", "ios"]' in source
     assert '"client": client_name' in source
     assert '"User-Agent": ua' in source
 
