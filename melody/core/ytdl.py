@@ -4456,7 +4456,11 @@ def _url_expiry(url: str) -> float:
 
 
 def _max_stream_height() -> int:
-    """Video height cap for /vplay, tied to the VC's VIDEO_QUALITY setting."""
+    """Video height cap for /vplay, tied to the VC's VIDEO_QUALITY setting.
+
+    720p is the default to avoid visibly blurred output; lower quality remains
+    available through VIDEO_QUALITY for constrained deployments.
+    """
     import os as _os
 
     return {
@@ -4464,7 +4468,7 @@ def _max_stream_height() -> int:
         "720p": 720,
         "480p": 480,
         "360p": 360,
-    }.get((_os.getenv("VIDEO_QUALITY") or "480p").strip().lower(), 480)
+    }.get((_os.getenv("VIDEO_QUALITY") or "720p").strip().lower(), 720)
 
 
 def _pick_stream_formats(info: dict, want_video: bool) -> dict:

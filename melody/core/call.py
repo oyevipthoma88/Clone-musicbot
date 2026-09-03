@@ -305,21 +305,20 @@ def _get_audio_quality():
 def _get_video_quality():
     """Return the VideoQuality used for /vplay-style video streams.
 
-    LAG FIX ("bohot jyada lag hota hai"): 720p was hardcoded. On the small
-    containers this bot usually runs on, a 720p encode saturates CPU and
-    uplink, which stalls the AUDIO ffmpeg too — the stutter users feel.
-    480p is the default now (set VIDEO_QUALITY=720p / 360p to override).
+    720p is the default: 480p was visibly soft/blurred for HD Telegram videos.
+    Deployments with a very small CPU/uplink can still lower it explicitly with
+    VIDEO_QUALITY=480p or VIDEO_QUALITY=360p.
     """
     from pytgcalls.types import VideoQuality
 
-    wanted = (os.getenv("VIDEO_QUALITY") or "480p").strip().lower()
+    wanted = (os.getenv("VIDEO_QUALITY") or "720p").strip().lower()
     table = {
         "1080p": "FHD_1080p",
         "720p": "HD_720p",
         "480p": "SD_480p",
         "360p": "SD_360p",
     }
-    name = table.get(wanted, "SD_480p")
+    name = table.get(wanted, "HD_720p")
     return getattr(VideoQuality, name, None) or VideoQuality.SD_480p
 
 

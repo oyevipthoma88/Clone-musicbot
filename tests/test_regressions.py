@@ -452,6 +452,14 @@ def test_vplay_command_defensively_forces_video_mode():
     assert "video = bool(video or command_name" in source
 
 
+def test_vplay_default_quality_avoids_blurred_480p_output():
+    call = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    ytdl = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
+    assert 'os.getenv("VIDEO_QUALITY") or "720p"' in call
+    assert 'os.getenv("VIDEO_QUALITY") or "720p"' in ytdl
+    assert 'VIDEO_QUALITY=480p' in call
+
+
 def test_bare_youtube_ids_use_the_direct_metadata_route():
     source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     assert 're.fullmatch(r"[A-Za-z0-9_-]{11}", url_or_query.strip())' in source
