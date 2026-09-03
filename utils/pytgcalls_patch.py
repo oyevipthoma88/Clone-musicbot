@@ -472,6 +472,13 @@ def apply_pytgcalls_probe_patch() -> None:
         # with. Skip the pre-check instead of killing every single /play.
         if not _ffprobe_available():
             return None
+        # The Telegram range proxy is an in-process source controlled by this
+        # worker. ffprobe cannot reliably inspect a live MKV/MP4 range stream
+        # before FFmpeg opens it, so probing only adds a 4-second timeout and
+        # does not improve safety. Let PyTgCalls consume the proxy directly.
+        if _is_local_proxy_url(path):
+            log.info("⚡ Telegram media proxy detected — skipping ffprobe pre-check, playing directly.")
+            return None
         # LOG FIX: retrying a probe that already failed on a LOCAL file just
         # burns another ffprobe timeout (the log shows every local track probed
         # twice before playing anyway). Retry only remote URLs, where a hiccup

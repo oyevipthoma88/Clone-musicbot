@@ -442,6 +442,8 @@ def test_prefetch_config_is_imported_and_vplay_proxy_is_local_source():
     assert "from melody.config import Config" in call
     assert "def _is_local_proxy_url(path)" in probe
     assert "local = _is_local_source(path)" in probe
+    assert "Telegram media proxy detected" in probe
+    assert "if _is_local_proxy_url(path):" in probe
 
 
 def test_vplay_command_defensively_forces_video_mode():
