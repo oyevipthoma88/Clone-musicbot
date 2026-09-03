@@ -1049,27 +1049,23 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         "bestaudio[ext=opus]/bestaudio[abr<=128]/"
         "bestaudio[ext=ogg]/bestaudio[abr<=128]/best"
         if audio_only
-        # ROOT-CAUSE FIX ("/vplay pe audio aur video mismatch"): a DASH
-        # video-only + audio-only pair is fed to TWO separate ffmpeg
-        # processes by PyTgCalls, which start at slightly different times
-        # and drift apart for the rest of the song. A single MUXED file (or
-        # an explicitly merged mp4) carries both tracks with one shared
-        # timebase, so they can never drift.
-        # SPEED FIX ("/vplay 20 sec le raha hai"): YouTube only ships ONE
-        # progressive (muxed) format nowadays — itag 18, 360p. Everything
-        # above it is DASH, which forces a bestvideo+bestaudio download AND
-        # an ffmpeg merge post-processor before playback can even start
-        # (that merge is also what raised the "post_process ... run_all_pps"
-        # crash in the error log). Asking for the muxed format FIRST means
-        # the usual /vplay is a single small file with one shared timebase:
-        # no merge, no drift, no 20-second wait. DASH stays as a fallback
-        # only for videos that genuinely have no progressive format.
+        # QUALITY ROOT-CAUSE FIX ("vplay me quality low hai"): YouTube ships
+        # exactly one progressive/muxed format today — itag 18, 360p. Asking
+        # for muxed FIRST therefore pinned every downloaded /vplay to 360p
+        # regardless of VIDEO_QUALITY. Ask for a real bestvideo+bestaudio
+        # merge inside the configured height cap instead (H.264 preferred so
+        # the merge into mp4 is a stream copy, not a re-encode) and keep the
+        # muxed itag as the last-resort fallback. The merge still produces ONE
+        # mp4 with a single shared timebase, so audio and video cannot drift.
         else (
-            "best[vcodec!=none][acodec!=none][height<=720]"
+            f"bestvideo[height<={_env_int('VIDEO_MAX_HEIGHT', _max_stream_height())}][vcodec^=avc1]"
+            "+bestaudio[ext=m4a]"
+            f"/bestvideo[height<={_env_int('VIDEO_MAX_HEIGHT', _max_stream_height())}]+bestaudio"
+            f"/best[vcodec!=none][acodec!=none][height<={_env_int('VIDEO_MAX_HEIGHT', _max_stream_height())}]"
             "/best[vcodec!=none][acodec!=none]"
-            "/bestvideo[height<=480]+bestaudio[abr<=128]"
-            "/best[height<=480]/best"
+            "/bestvideo+bestaudio/best"
         )
+
     )
     # Start the warm PO-token provider only when yt-dlp is genuinely needed.
     # This is intentionally best-effort: the provider args below retain the
@@ -4568,33 +4564,57 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
     # only to downscale it wastes bandwidth and CPU and causes the stutter.
     cap = _max_stream_height()
 
-    muxed_ok = [f for f in muxed_fmts if 0 < height(f) <= cap]
-    if muxed_ok:
-        best_muxed = max(muxed_ok, key=lambda f: (height(f), f.get("tbr") or 0))
-        # One container carrying both tracks: hand the SAME url to both ffmpeg
-        # processes and let each pick its own track.
-        return {"video": best_muxed["url"], "audio": best_muxed["url"]}
+    def _video_rank(f):
+        # Prefer H.264 at equal height: it is the cheapest decode on a 1-CPU
+        # dyno, so the VC keeps a stable framerate instead of stuttering.
+        vcodec = str(f.get("vcodec") or "")
+        h264 = 1 if vcodec.startswith(("avc1", "h264")) else 0
+        return (height(f), h264, f.get("tbr") or 0)
 
-    # ROOT-CAUSE FIX ("/vplay me audio aur video mismatch ho raha hai"):
-    # this used to hand PyTgCalls a DASH PAIR — a video-only URL for the
-    # camera ffmpeg and a separate audio-only URL for the microphone ffmpeg.
-    # Two independent ffmpeg processes, two independent HTTP connections, two
-    # different start latencies: they begin a few hundred ms apart and drift
-    # further with every CDN stall, which is exactly the lip-sync mismatch
-    # that was reported. Returning {} here makes the caller fall back to the
-    # download path, where yt-dlp merges video+audio into ONE mp4 with a
-    # single shared timebase — perfectly in sync by construction.
-    if [f for f in video_only_fmts if 0 < height(f) <= cap] and audio_pick:
-        LOGGER.info(
-            "#stream only a DASH video/audio pair available — using the merged "
-            "download path instead to keep audio and video in sync."
-        )
-        return {}
+    muxed_ok = [f for f in muxed_fmts if 0 < height(f) <= cap]
+    best_muxed = max(muxed_ok, key=_video_rank) if muxed_ok else None
+    muxed_height = height(best_muxed) if best_muxed else 0
+
+    # ROOT-CAUSE FIX ("/vplay me quality low hai aur aavaj nahi aati"):
+    # YouTube ships exactly ONE progressive/muxed format today — itag 18,
+    # 360p — so preferring muxed meant every /vplay was 360p no matter what
+    # VIDEO_QUALITY said. Worse, the same signed googlevideo URL was handed
+    # to BOTH ffmpeg processes (camera + microphone); YouTube throttles or
+    # refuses the second concurrent connection on one signed URL, so the
+    # microphone process regularly got nothing at all — that is the missing
+    # audio. A DASH video-only + audio-only pair fixes both: real 720p/1080p
+    # video and a dedicated audio connection that can never be starved. Both
+    # ffmpeg inputs are complete, immutable, seekable sources starting at
+    # t=0, so they stay frame-aligned.
+    dash_ok = [f for f in video_only_fmts if 0 < height(f) <= cap]
+    if dash_ok and audio_pick:
+        best_video = max(dash_ok, key=_video_rank)
+        if height(best_video) >= muxed_height:
+            return {"video": best_video["url"], "audio": audio_pick["url"]}
+
+    if best_muxed:
+        # Single container fallback. Still give the microphone its own
+        # audio-only URL when one exists so the two ffmpeg processes never
+        # compete for the same signed CDN connection.
+        return {
+            "video": best_muxed["url"],
+            "audio": (audio_pick or best_muxed)["url"],
+        }
+
+    if video_only_fmts and audio_pick:
+        # Everything is above the cap (e.g. cap=360p on a 1080p-only video):
+        # take the lowest available video rather than forcing a full download.
+        smallest = min(video_only_fmts, key=lambda f: (height(f), f.get("tbr") or 0))
+        return {"video": smallest["url"], "audio": audio_pick["url"]}
 
     if muxed_fmts:
-        best_muxed = max(muxed_fmts, key=lambda f: (height(f), f.get("tbr") or 0))
-        return {"video": best_muxed["url"], "audio": best_muxed["url"]}
+        fallback = max(muxed_fmts, key=_video_rank)
+        return {
+            "video": fallback["url"],
+            "audio": (audio_pick or fallback)["url"],
+        }
     return {}
+
 
 
 def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
