@@ -38,3 +38,9 @@ def test_proxy_is_optional_and_tagged_media_has_download_fallback():
     start = source.index(marker)
     tail = source[start:source.index("            ext = file_name", start)]
     assert "return None" not in tail
+
+
+def test_drm_download_error_is_treated_as_unavailable_content():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert '"this video is drm protected"' in source
+    assert '"drm protected"' in source

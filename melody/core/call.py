@@ -1204,6 +1204,8 @@ _UNAVAILABLE_MARKERS = (
     "who has blocked it in your country",
     "is not available in your country",
     "members-only content",
+    "this video is drm protected",
+    "drm protected",
     "this live event has ended",
     "requested format is not available",
 )
