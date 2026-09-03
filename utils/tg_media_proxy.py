@@ -22,11 +22,18 @@ from melody.logging import LOGGER
 
 _CHUNK_BYTES = 1024 * 1024
 _MAX_PROXIES = 64
+# Each video playback normally opens separate audio/video HTTP readers. Keep
+# enough independent slots for several chats without allowing unbounded Telegram
+# downloads to exhaust the worker.
+try:
+    _FIRST_CHUNK_TIMEOUT = max(2.0, float(os.getenv("TG_PROXY_FIRST_CHUNK_TIMEOUT", "8")))
+except (TypeError, ValueError):
+    _FIRST_CHUNK_TIMEOUT = 8.0
 _PROXY_TTL = 6 * 3600.0
 try:
-    _PROXY_CONCURRENCY = max(1, int(os.getenv("TG_PROXY_CONCURRENCY", "4")))
+    _PROXY_CONCURRENCY = max(1, int(os.getenv("TG_PROXY_CONCURRENCY", "12")))
 except (TypeError, ValueError):
-    _PROXY_CONCURRENCY = 4
+    _PROXY_CONCURRENCY = 12
 
 
 @dataclass
@@ -133,9 +140,25 @@ async def _media_handler(request: web.Request) -> web.StreamResponse:
         remaining = length
         try:
             limit = (end // _CHUNK_BYTES) - first_chunk + 1
-            async for chunk in entry.client.stream_media(
+            iterator = entry.client.stream_media(
                 entry.message, limit=limit, offset=first_chunk
-            ):
+            ).__aiter__()
+            first = True
+            while remaining > 0:
+                # A Telegram RPC can occasionally hang after a dropped DC
+                # connection. Bound only the first chunk aggressively so ffmpeg
+                # retries the HTTP range instead of leaving a frozen video; the
+                # established stream is allowed to run normally afterward.
+                if first:
+                    chunk = await asyncio.wait_for(
+                        iterator.__anext__(), timeout=_FIRST_CHUNK_TIMEOUT
+                    )
+                    first = False
+                else:
+                    try:
+                        chunk = await iterator.__anext__()
+                    except StopAsyncIteration:
+                        break
                 if skip:
                     chunk = chunk[skip:]
                     skip = 0
@@ -148,8 +171,6 @@ async def _media_handler(request: web.Request) -> web.StreamResponse:
                 # while a new user registers another movie.
                 entry.touched = time.monotonic()
                 remaining -= len(piece)
-                if remaining <= 0:
-                    break
             await response.write_eof()
         except asyncio.CancelledError:
             raise

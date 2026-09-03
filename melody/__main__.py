@@ -12,6 +12,7 @@ import asyncio
 import importlib
 import pkgutil
 import platform
+import os
 import uvloop
 from melody.logging import LOGGER
 from melody.config import Config
@@ -747,9 +748,16 @@ async def main():
     # created a large CPU/RSS spike before the first user command, especially on
     # a 512 MB dyno. Playback starts the same helpers lazily when a fallback
     # actually needs them; larger deployments can opt into boot pre-warming.
-    if Config.BGUTIL_STARTUP_WARMUP or Config.STARTUP_WARMUPS:
+    # Warm the lightweight PO-token HTTP provider before the first /play.
+    # Otherwise the first direct resolver starts Deno/bgutil on the command
+    # path and adds the 4-8s delay visible in production logs. Low-memory
+    # workers remain protected; other workers can explicitly opt out with 0.
+    _bgutil_opt_out = os.getenv("BGUTIL_STARTUP_WARMUP", "").strip().lower() in {
+        "0", "false", "no", "off",
+    }
+    if (not Config._LOW_MEMORY_PROFILE and not _bgutil_opt_out) or Config.STARTUP_WARMUPS:
         from melody.core.ytdl import warm_up_bgutil_server
-        spawn(warm_up_bgutil_server())
+        spawn(warm_up_bgutil_server(), name="bgutil-startup-warmup")
     if Config.STARTUP_WARMUPS:
         from melody.core.ytdl import warm_popular_metadata
         spawn(warm_popular_metadata())

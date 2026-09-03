@@ -132,10 +132,10 @@ class Config:
     # To get a file_id: forward any sticker to your bot and use /eval to print it
     WELCOME_STICKER: str = _env_str("WELCOME_STICKER")
 
-    # Expensive startup warm-ups are opt-in. They launch yt-dlp/Deno work before
-    # any user asks for music and can spike RSS on 512 MB dynos. The low-memory
-    # profile wins over stale enable flags so no manual Config Var cleanup is
-    # required after upgrading.
+    # Expensive metadata warm-ups remain opt-in, but the lightweight bgutil
+    # provider is pre-warmed on every non-low-memory worker. This removes the
+    # first-play 4-8s token-provider startup penalty without affecting 512 MB
+    # dynos, where the low-memory profile still disables it automatically.
     MEMORY_LIMIT_MB: int = _env_int("MEMORY_LIMIT_MB", 512)
     _LOW_MEMORY_PROFILE: bool = MEMORY_LIMIT_MB <= 768
     STARTUP_WARMUPS: bool = (
