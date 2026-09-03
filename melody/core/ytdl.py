@@ -3430,7 +3430,15 @@ async def download_audio(
             fut = loop.create_future()
             fut.add_done_callback(_consume_download_future)
             _download_futures[dedup_key] = fut
-            state = _EarlyDownloadState() if allow_early else None
+            # ROOT FIX ("gaana 20s baad bajta hai"): the early-handoff state used
+            # to be created ONLY when the very first caller asked for it. A warm
+            # prefetch (/play resolver, autoplay) starts the download WITHOUT
+            # allow_early, so the real playback caller that arrived a moment later
+            # deduped onto a job that could never publish a growing-file path and
+            # had to block on the COMPLETE download — exactly the 19s wait in the
+            # logs. Audio jobs now always carry the state; only consumers that pass
+            # allow_early actually read it, so nothing else changes.
+            state = _EarlyDownloadState() if (allow_early or audio_only) else None
             if state is not None:
                 _download_early_states[dedup_key] = state
             existing = None
