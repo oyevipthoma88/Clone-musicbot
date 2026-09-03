@@ -40,3 +40,10 @@ def test_dead_remote_source_skips_slow_ffprobe_and_uses_download_fallback():
     assert "remote source failed bounded ranged preflight" in source
     assert "raise StreamProbeUnavailable" in source
     assert "if \".m3u8\" in str(path).lower()" in source
+
+
+def test_current_track_has_one_interactive_direct_resolver_owner():
+    source = (ROOT / "melody/plugins/music/play.py").read_text(encoding="utf-8")
+    assert "Do not resolve the current track here" in source
+    assert "duplicate same-key resolve" in source
+    assert "return []" in source

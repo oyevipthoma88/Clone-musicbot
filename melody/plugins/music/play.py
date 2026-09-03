@@ -381,26 +381,14 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
                     ),
                     return_exceptions=True,
                 )
-            try:
-                await resolve_stream_urls(video_id, want_video=want_video)
-                return []
-            except Exception as exc:
-                LOGGER.info(
-                    "warm resolve failed for %s (%s) — playback will own fallback download",
-                    video_id, exc,
-                )
-                # On Heroku, _stream_track() already starts the interactive
-                # fallback immediately. Starting a second warm download here
-                # races direct resolution, inflates RSS, and can trigger R14;
-                # leave ownership with the bounded playback path.
-                if on_cloud_host():
-                    return []
-                return await asyncio.gather(
-                    download_audio(
-                        video_id, audio_only=not want_video, priority=0, owner=chat.id,
-                    ),
-                    return_exceptions=True,
-                )
+            # Do not resolve the current track here. _stream_track() starts
+            # the authoritative direct resolver a few lines later; warming it
+            # here created a duplicate same-key resolve which serialized behind
+            # the resolver lock and made the real playback task wait 8-10s
+            # (especially after a large /vplay had occupied the dyno). The
+            # interactive owner also starts the download fallback when needed,
+            # so this warm task must stay idle for direct playback.
+            return []
 
         warm_task = asyncio.create_task(_warm_sources(info["id"], video))
         _bg_downloads.add(warm_task)
