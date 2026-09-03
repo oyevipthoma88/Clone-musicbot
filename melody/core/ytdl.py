@@ -1045,8 +1045,9 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # download size — and therefore wait time — substantially without
         # a noticeable quality drop.
         f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 96)}]/"
-        "bestaudio[ext=webm][abr<=128]/"
-        "bestaudio[ext=opus]/bestaudio[abr<=128]/bestaudio/best"
+        "bestaudio[ext=webm]/"
+        "bestaudio[ext=opus]/bestaudio[abr<=128]/"
+        "bestaudio[ext=ogg]/bestaudio[abr<=128]/best"
         if audio_only
         # ROOT-CAUSE FIX ("/vplay pe audio aur video mismatch"): a DASH
         # video-only + audio-only pair is fed to TWO separate ffmpeg
@@ -3151,15 +3152,20 @@ async def download_replied_media(client, message, video: bool = False) -> "dict 
         if not cached:
             file_size = int(getattr(media, "file_size", 0) or 0)
             file_name = getattr(media, "file_name", None) or ""
-            if file_size >= _TAGGED_PROXY_THRESHOLD_BYTES:
+            # Video replies must start without waiting for a complete MP4/MKV download:
+            # those containers keep their index at EOF and cannot use the safe
+            # growing-file handoff. The local range proxy serves only the bytes
+            # ffmpeg requests, so it is the instant path for every replied video;
+            # retain the size threshold for audio to avoid unnecessary proxy RPCs.
+            if video or file_size >= _TAGGED_PROXY_THRESHOLD_BYTES:
                 try:
                     from utils.tg_media_proxy import create_media_proxy
                     proxy_url = await create_media_proxy(
                         client, message, size=file_size, filename=file_name or "media"
                     )
                     LOGGER.info(
-                        "tagged media using range proxy id=%s size_mb=%.0f",
-                        vid, file_size / 1048576,
+                        "tagged media using range proxy (instant) id=%s size_mb=%.0f video=%s",
+                        vid, file_size / 1048576, video,
                     )
                     return _tg_media_info(media, message, vid, proxy_url)
                 except Exception as exc:
