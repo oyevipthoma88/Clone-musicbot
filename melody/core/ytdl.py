@@ -1616,7 +1616,7 @@ def _innertube_search_sync(query: str) -> dict | None:
                 timeout=12.0,
             )
             if resp.status_code != 200:
-                LOGGER.warning(
+                LOGGER.debug(
                     "InnerTube %s search HTTP %s for %s", client_name,
                     resp.status_code, query[:40],
                 )
@@ -1629,7 +1629,7 @@ def _innertube_search_sync(query: str) -> dict | None:
             break
 
     if not data:
-        LOGGER.warning("InnerTube search: all client contexts failed for: %s", query[:50])
+        LOGGER.debug("InnerTube search: all client contexts failed for: %s", query[:50])
         return None
 
     # Parse InnerTube response — walk the renderer tree
@@ -1848,7 +1848,7 @@ def _innertube_next_sync(video_id: str) -> "dict | None":
                 timeout=6.0,
             )
             if resp.status_code != 200:
-                LOGGER.warning(
+                LOGGER.debug(
                     "InnerTube %s next HTTP %s for %s", client_name,
                     resp.status_code, video_id,
                 )
@@ -3722,7 +3722,7 @@ def _innertube_related_sync(video_id: str, exclude: set) -> list[dict]:
                 timeout=10.0,
             )
             if resp.status_code != 200:
-                LOGGER.warning(
+                LOGGER.debug(
                     "InnerTube %s related HTTP %s for %s", client_name,
                     resp.status_code, video_id,
                 )
@@ -3735,7 +3735,7 @@ def _innertube_related_sync(video_id: str, exclude: set) -> list[dict]:
             break
 
     if not data:
-        LOGGER.warning("InnerTube related: all client contexts failed for %s", video_id)
+        LOGGER.debug("InnerTube related: all client contexts failed for %s", video_id)
         return []
 
     def _extract_video_id(renderer):

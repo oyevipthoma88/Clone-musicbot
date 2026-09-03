@@ -60,6 +60,16 @@ except Exception:  # noqa: BLE001
 if _IS_CLOUD_RUNTIME:
     _DOWNLOAD_START_DELAY = 0.0
 
+# Direct YouTube video playback uses two independent ffmpeg processes (camera
+# and microphone). A CDN stall can therefore kill only the audio process while
+# the video process keeps running, which matches the reported "vplay me audio
+# bich me gayab" symptom. Keep direct streaming opt-in for video; audio-only
+# playback remains direct by default, and live HLS sources remain direct because
+# they cannot be downloaded to completion.
+_DIRECT_VIDEO_STREAM = os.getenv("DIRECT_VIDEO_STREAM", "false").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+
 # How long py-tgcalls gets to open a direct CDN URL before we give up on it.
 # Cloud googlevideo routes can occasionally need several seconds for the
 # first media response. Keep a bounded but shorter default so a dead/blank
@@ -1568,7 +1578,9 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
             # Tagged Telegram media (synthetic "tg<chat>_<msg>" id) has no CDN
             # URL — racing the direct path only wastes the resolver timeout.
             direct_first = live_source or (
-                should_try_direct_stream() and not is_tg_media_id(track.video_id)
+                should_try_direct_stream()
+                and not is_tg_media_id(track.video_id)
+                and (not video or _DIRECT_VIDEO_STREAM)
             )
             if direct_first:
                 direct_task = asyncio.create_task(
@@ -1576,6 +1588,10 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 )
                 pending.add(direct_task)
 
+            # For YouTube vplay, the completed-file path is intentional: both
+            # py-tgcalls pipelines then read one immutable local container,
+            # preventing a CDN/audio process from disappearing mid-track. Live
+            # sources still use the direct path above because they never finish.
             # SPEED JUGAAD: the full download used to start at the exact same
             # instant as the direct-CDN resolve. On a small dyno that download
             # eats the CPU and the bandwidth the resolve needs, so the "fast"
@@ -2565,6 +2581,9 @@ async def force_play_stream(
 ) -> bool:
     """Immediately play ``track`` without racing another state transition."""
     _clear_leaving(chat_id)
+    # Manual force-play is also a fresh user request (including /vplayforce).
+    # Do not let a previous speed control leak into this new stream.
+    reset_playback_speed(chat_id)
     try:
         from melody.core.ytdl import cancel_lower_priority_downloads
         cancel_lower_priority_downloads(0, exclude_video_id=track.video_id)
@@ -2645,6 +2664,10 @@ async def play_stream(
 
     # A new /play cancels any pending leave-suppression window.
     _clear_leaving(chat_id)
+    # Keep the invariant at the core boundary as well as in the Telegram
+    # handlers: every fresh manual track starts at 1.0x, even when a caller
+    # bypasses play.py (channel wrappers, tests, or older integrations).
+    reset_playback_speed(chat_id)
     lock = _get_play_lock(chat_id)
 
     async with lock:
@@ -3180,11 +3203,18 @@ async def set_playback_speed(chat_id: int, speed: float) -> bool:
         return False
 
     position = get_playback_position(chat_id)
+    previous_speed = get_speed(chat_id)
     _speed[chat_id] = speed
     try:
         await seek_stream(chat_id, position)
         return True
     except Exception as exc:
+        # A failed re-issue must not leave a half-applied 2x/0.5x value behind;
+        # otherwise the next track can unexpectedly start at the failed speed.
+        if abs(previous_speed - 1.0) < 0.001:
+            _speed.pop(chat_id, None)
+        else:
+            _speed[chat_id] = previous_speed
         if _is_not_in_call(exc):
             _forget_call_state(chat_id)
             return False

@@ -25,6 +25,7 @@ things the callers need, with no dependency on high-level wrapper fields.
 from typing import Dict, Iterable, Optional
 
 import logging
+import time
 
 from pyrogram import raw
 
@@ -53,6 +54,11 @@ class EmojiResolutionUnavailable(RuntimeError):
 # Set to False once Telegram tells us this account may not call the method at
 # all, so we stop paying for a round-trip that can never succeed.
 RESOLUTION_SUPPORTED = True
+# A transient Telegram timeout should not trigger one RPC per queued glyph.
+# Premium-emoji verification is a nonessential presentation feature, so back
+# off briefly and fail open while playback continues normally.
+_RESOLUTION_RETRY_AT = 0.0
+_RESOLUTION_RETRY_COOLDOWN = 60.0
 
 _UNSUPPORTED_MARKERS = ("BOT_METHOD_INVALID", "METHOD_INVALID", "USER_BOT_INVALID")
 
@@ -67,7 +73,7 @@ async def resolve_custom_emoji(client, ids: Iterable[int]) -> Dict[int, Optional
     all (network error, or a bot account that may not call the method) — that
     is "unknown", not "invalid".
     """
-    global RESOLUTION_SUPPORTED
+    global RESOLUTION_SUPPORTED, _RESOLUTION_RETRY_AT
     wanted = [int(i) for i in dict.fromkeys(ids)]
     resolved: Dict[int, Optional[str]] = {}
 
@@ -76,6 +82,10 @@ async def resolve_custom_emoji(client, ids: Iterable[int]) -> Dict[int, Optional
     if not RESOLUTION_SUPPORTED:
         raise EmojiResolutionUnavailable(
             "messages.GetCustomEmojiDocuments is not available for this account"
+        )
+    if time.monotonic() < _RESOLUTION_RETRY_AT:
+        raise EmojiResolutionUnavailable(
+            "custom-emoji verification is temporarily backing off after a timeout"
         )
 
     failures = 0
@@ -87,6 +97,7 @@ async def resolve_custom_emoji(client, ids: Iterable[int]) -> Dict[int, Optional
             )
         except Exception as exc:  # noqa: BLE001 - never let this kill a send
             failures += 1
+            _RESOLUTION_RETRY_AT = time.monotonic() + _RESOLUTION_RETRY_COOLDOWN
             if any(m in str(exc).upper() for m in _UNSUPPORTED_MARKERS):
                 RESOLUTION_SUPPORTED = False
                 log.info(
@@ -94,7 +105,10 @@ async def resolve_custom_emoji(client, ids: Iterable[int]) -> Dict[int, Optional
                     "(%s) — premium emoji ids will be used unverified.", exc,
                 )
             else:
-                log.warning("Could not resolve custom emoji ids %s: %s", batch, exc)
+                log.warning(
+                    "Custom-emoji verification temporarily unavailable (%s); "
+                    "backing off for %.0fs.", exc, _RESOLUTION_RETRY_COOLDOWN,
+                )
             continue
 
         for document in documents or []:
