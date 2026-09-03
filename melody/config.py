@@ -140,8 +140,11 @@ class Config:
     # MEMORY_LIMIT_MB is not explicitly configured. Treat DYNO as 1 GB by
     # default so the lightweight bgutil startup warmup actually runs; users
     # with smaller workers can still set MEMORY_LIMIT_MB explicitly.
-    MEMORY_LIMIT_MB: int = _env_int(
-        "MEMORY_LIMIT_MB", 1024 if os.getenv("DYNO") else 512
+    # The deployed Heroku worker is the 1 GB profile. Keep that decision in
+    # code so a stale MEMORY_LIMIT_MB config var cannot silently disable the
+    # startup provider warmup and put its 4-8s cost on the first /play.
+    MEMORY_LIMIT_MB: int = 1024 if os.getenv("DYNO") else _env_int(
+        "MEMORY_LIMIT_MB", 512
     )
     _LOW_MEMORY_PROFILE: bool = MEMORY_LIMIT_MB <= 768
     STARTUP_WARMUPS: bool = (

@@ -752,12 +752,15 @@ async def main():
     # Otherwise the first direct resolver starts Deno/bgutil on the command
     # path and adds the 4-8s delay visible in production logs. Low-memory
     # workers remain protected; other workers can explicitly opt out with 0.
-    _bgutil_opt_out = os.getenv("BGUTIL_STARTUP_WARMUP", "").strip().lower() in {
-        "0", "false", "no", "off",
-    }
-    if (not Config._LOW_MEMORY_PROFILE and not _bgutil_opt_out) or Config.STARTUP_WARMUPS:
+    if not Config._LOW_MEMORY_PROFILE or Config.STARTUP_WARMUPS:
         from melody.core.ytdl import warm_up_bgutil_server
-        spawn(warm_up_bgutil_server(), name="bgutil-startup-warmup")
+        try:
+            # Do not merely spawn this task: a first /play can arrive before
+            # bgutil is ready and select the slower script provider. Awaiting
+            # the bounded warmup makes the fast HTTP provider deterministic.
+            await warm_up_bgutil_server(timeout=15.0)
+        except Exception as exc:  # noqa: BLE001 - playback keeps a fallback
+            LOGGER.warning("bgutil startup warmup skipped: %s", exc)
     if Config.STARTUP_WARMUPS:
         from melody.core.ytdl import warm_popular_metadata
         spawn(warm_popular_metadata())
