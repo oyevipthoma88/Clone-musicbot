@@ -123,6 +123,97 @@ async def log_activity(text: str):
         LOGGER.debug("log_activity failed to deliver: %s | text=%s", exc, text)
 
 
+def _audit_person(user) -> str:
+    """Render a Telegram user with a human name, username and numeric ID."""
+    if not user:
+        return "Unknown (ID unavailable)"
+    name = " ".join(
+        part for part in (
+            getattr(user, "first_name", None),
+            getattr(user, "last_name", None),
+        ) if part
+    ) or getattr(user, "title", None) or "Unknown"
+    username = getattr(user, "username", None)
+    uid = getattr(user, "id", None)
+    suffix = f" @{username}" if username else ""
+    return f"{name}{suffix} (ID: {uid if uid is not None else '—'})"
+
+
+async def log_group_event(
+    client,
+    action: str,
+    chat_id: int,
+    *,
+    actor=None,
+    target=None,
+    assistant=None,
+    old_status: str | None = None,
+    new_status: str | None = None,
+    result: str | None = None,
+    details: str | None = None,
+):
+    """Send a complete, human-readable group membership audit event.
+
+    This deliberately resolves the chat and current member count at event
+    time. The numeric ID is retained for exact correlation, but the title and
+    usernames make the log useful to a human scanning a busy log channel.
+    Logging is best-effort and never propagates into Telegram handlers.
+    """
+    try:
+        from html import escape
+
+        chat = await client.get_chat(chat_id)
+        title = getattr(chat, "title", None) or getattr(chat, "first_name", None) or "Private chat"
+        username = getattr(chat, "username", None)
+        chat_line = f"{title}{f' @{username}' if username else ''} (ID: {chat_id})"
+        count = "unavailable"
+        try:
+            counter = getattr(client, "get_chat_members_count", None)
+            if counter is not None:
+                count = str(await counter(chat_id))
+        except Exception:
+            pass
+
+        me = None
+        try:
+            me = await client.get_me()
+        except Exception:
+            pass
+        admin_lines = []
+        for label, user in (("Bot", me), ("Assistant", assistant)):
+            if not user:
+                continue
+            try:
+                member = await client.get_chat_member(chat_id, user.id)
+                admin_lines.append(f"{label}: {getattr(member, 'status', 'unknown')}")
+            except Exception as exc:
+                admin_lines.append(f"{label}: unavailable ({type(exc).__name__})")
+
+        lines = [
+            f"#group_audit #{str(action).lower().replace(' ', '_')}",
+            f"<b>🏠 Group action: {escape(str(action))}</b>",
+            f"• Group: <b>{escape(chat_line)}</b>",
+            f"• Members at event time: <code>{escape(count)}</code>",
+        ]
+        if actor is not None:
+            lines.append(f"• By / actor: <code>{escape(_audit_person(actor))}</code>")
+        if target is not None:
+            lines.append(f"• Target: <code>{escape(_audit_person(target))}</code>")
+        if old_status or new_status:
+            lines.append(
+                f"• Status: <code>{escape(old_status or '—')} → {escape(new_status or '—')}</code>"
+            )
+        if admin_lines:
+            lines.append("• Permission snapshot: " + " · ".join(escape(x) for x in admin_lines))
+        if result:
+            lines.append(f"• Result: <b>{escape(str(result))}</b>")
+        if details:
+            lines.append(f"• Details: {escape(str(details))}")
+        await log_activity("\n".join(lines))
+    except Exception as exc:
+        LOGGER.debug("group audit log failed for %s/%s: %s", chat_id, action, exc)
+
+
 async def send_error_log(
     text: str,
     exc: Exception = None,

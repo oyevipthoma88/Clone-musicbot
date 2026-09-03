@@ -6,7 +6,7 @@ from melody import bot
 from melody.config import Config
 from utils.decorators import error_handler
 from utils.buttons import ikb, STYLE_PRIMARY, STYLE_SUCCESS, STYLE_DANGER
-from melody.logging import log_activity
+from melody.logging import log_activity, log_group_event
 from utils.tasks import spawn
 
 
@@ -80,14 +80,11 @@ async def bot_added_to_group(client: Client, message: Message):
         return
     adder = message.from_user
     group = message.chat
-    adder_name = html.escape(adder.first_name if adder else "Unknown")
     group_name = html.escape(group.title or str(group.id))
-    spawn(log_activity(
-        f"#group_added #newchat\n<b>Apex Vibes added to group</b>\n"
-        f"• Group: <code>{group_name}</code>\n"
-        f"• Group ID: <code>{group.id}</code>\n"
-        f"• Added by: <code>{adder_name}</code>\n"
-        f"• Added by ID: <code>{adder.id if adder else '—'}</code>"
+    spawn(log_group_event(
+        client, "bot_added_to_group", group.id,
+        actor=adder, target=me, result="bot joined",
+        details=f"Bot received a new_chat_members update for {group_name}.",
     ), name=f"log-group-added-{group.id}")
 
 
