@@ -4389,7 +4389,10 @@ _stream_url_locks: dict = {}
 # the same resolver ladder three times. The short TTL still permits recovery
 # from transient YouTube/CDN changes.
 _stream_url_failures: dict = {}
-_STREAM_URL_FAILURE_TTL = 30.0
+# Keep negative caching short: a YouTube client/PO-token outage is often
+# transient, and a 30-second poison window made every concurrent playback
+# caller skip the newly-added client rotation even after the CDN recovered.
+_STREAM_URL_FAILURE_TTL = 8.0
 _STREAM_URL_FALLBACK_TTL = 1800  # used when the URL carries no `expire`
 _STREAM_URL_SAFETY_MARGIN = 300  # re-resolve this long before real expiry
 _STREAM_URL_CACHE_MAX = 128
@@ -4637,7 +4640,7 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
 
 
 def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
-    opts = {
+    base_opts = {
         **_ydl_opts(audio_only=not want_video),
         "extract_flat": False,
         "skip_download": True,
@@ -4654,46 +4657,84 @@ def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
         "writesubtitles": False,
         "writeautomaticsub": False,
     }
-    _ex = dict(opts.get("extractor_args") or {})
+    _ex = dict(base_opts.get("extractor_args") or {})
     _yt = dict(_ex.get("youtube") or {})
     _yt.setdefault("player_skip", ["configs"])
     _yt.setdefault("skip", ["translated_subs"])
     _ex["youtube"] = _yt
-    opts["extractor_args"] = _ex
-    # The format selector only matters for a download; picking the streamable
-    # pair by hand needs the FULL format list, so drop the selector here.
-    opts.pop("format", None)
-    with _locked_ytdl(opts) as ydl:
-        info = ydl.extract_info(target, download=False)
-    if info and info.get("entries"):
-        info = info["entries"][0]
-    info = info or {}
-    picked = _pick_stream_formats(info, want_video)
-    if not picked and info.get("url"):
-        # A few extractor clients return a single playable URL at the top
-        # level without a populated `formats` array. Reuse it rather than
-        # needlessly falling back to a full download. This includes HLS-only
-        # responses, which are valid progressive sources for ffmpeg.
-        proto = str(info.get("protocol") or "")
-        top_url = str(info["url"])
-        top_url_path = top_url.split("?", 1)[0].lower()
-        top_level_hls = "m3u8" in proto or top_url_path.endswith(".m3u8")
-        top_level_http = proto.startswith("http") and "dash" not in proto
-        if top_level_http or top_level_hls:
-            picked = {"video": info["url"], "audio": info["url"]} if want_video else {"audio": info["url"], "video": None}
+    base_opts["extractor_args"] = _ex
+
+    # YouTube can return a valid player response but no usable URLs for one
+    # client family (SABR/PO-token gating, geo policy, or a transient client
+    # rollout).  The old resolver made exactly one yt-dlp extraction, so a
+    # client-specific empty format list immediately became
+    # "direct-stream unavailable" even though another client could serve the
+    # same public video.  Rotate lightweight client profiles before declaring
+    # the direct path unavailable.  This is metadata-only and does not start a
+    # second download; the first profile that yields a real HTTP/HLS source
+    # wins.
+    direct_profiles = (
+        None,  # use the normal authenticated + PO-token policy first
+        ["ios", "android_vr"],
+        ["tv_simply", "tv"],
+        ["web_safari", "web_embedded"],
+        ["mweb"],
+    )
+    last_info: dict = {}
+    last_exc: Exception | None = None
+    for profile in direct_profiles:
+        opts = dict(base_opts)
+        if profile:
+            extractor_args = {k: dict(v) for k, v in (base_opts.get("extractor_args") or {}).items()}
+            youtube = dict(extractor_args.get("youtube") or {})
+            youtube["player_client"] = list(profile)
+            extractor_args["youtube"] = youtube
+            opts["extractor_args"] = extractor_args
+        # The format selector only matters for a download; picking the
+        # streamable pair by hand needs the FULL format list.
+        opts.pop("format", None)
+        try:
+            with _locked_ytdl(opts) as ydl:
+                info = ydl.extract_info(target, download=False)
+            if info and info.get("entries"):
+                info = info["entries"][0]
+            info = info or {}
+            last_info = info
+            picked = _pick_stream_formats(info, want_video)
+            if not picked and info.get("url"):
+                # Some extractor clients return one playable URL at top level
+                # without a populated formats array (including HLS-only
+                # responses, which ffmpeg can consume directly).
+                proto = str(info.get("protocol") or "")
+                top_url_path = str(info["url"]).split("?", 1)[0].lower()
+                top_level_hls = "m3u8" in proto or top_url_path.endswith(".m3u8")
+                top_level_http = proto.startswith("http") and "dash" not in proto
+                if top_level_http or top_level_hls:
+                    picked = ({"video": info["url"], "audio": info["url"]}
+                              if want_video else {"audio": info["url"], "video": None})
+            if picked:
+                break
+        except Exception as exc:  # try the next independent client profile
+            last_exc = exc
+            LOGGER.debug("direct yt-dlp profile %s failed for %s: %s", profile or "default", target, exc)
+            picked = {}
+    else:
+        picked = {}
+
     if not picked:
         safe_target_id = _extract_video_id(target) or "unknown"
+        formats = last_info.get("formats") or []
         LOGGER.info(
-            "#stream direct formats unavailable for %s: formats=%d http=%d hls=%d audio=%d muxed=%d video=%d",
-            safe_target_id,
-            len(info.get("formats") or []),
-            sum(1 for f in info.get("formats") or [] if str(f.get("protocol") or "").startswith("http")),
-            sum(1 for f in info.get("formats") or [] if "m3u8" in str(f.get("protocol") or "") or str(f.get("url") or "").split("?")[0].endswith(".m3u8")),
-            sum(1 for f in info.get("formats") or [] if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")),
-            sum(1 for f in info.get("formats") or [] if f.get("acodec") not in (None, "none") and f.get("vcodec") not in (None, "none")),
-            sum(1 for f in info.get("formats") or [] if f.get("vcodec") not in (None, "none")),
+            "#stream direct formats unavailable for %s: formats=%d http=%d hls=%d audio=%d muxed=%d video=%d profiles=%d",
+            safe_target_id, len(formats),
+            sum(1 for f in formats if str(f.get("protocol") or "").startswith("http")),
+            sum(1 for f in formats if "m3u8" in str(f.get("protocol") or "") or str(f.get("url") or "").split("?")[0].endswith(".m3u8")),
+            sum(1 for f in formats if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")),
+            sum(1 for f in formats if f.get("acodec") not in (None, "none") and f.get("vcodec") not in (None, "none")),
+            sum(1 for f in formats if f.get("vcodec") not in (None, "none")),
+            len(direct_profiles),
         )
-        raise ValueError("no directly streamable http format found")
+        raise last_exc or ValueError("no directly streamable http format found")
     picked["is_live"] = bool((info or {}).get("is_live"))
     urls = [u for u in (picked.get("video"), picked.get("audio")) if u]
     resolved_headers = dict((info or {}).get("http_headers") or {})

@@ -990,7 +990,7 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
                 )
     except Exception as exc:
         LOGGER.info(
-            "#stream direct-stream unavailable for %s (%s) — falling back to download",
+            "#stream CDN profile unavailable for %s (%s) — download fallback engaged",
             getattr(track, "video_id", "?"), exc,
         )
         return None
@@ -3450,4 +3450,3 @@ async def auto_leave_watchdog() -> None:
                 await stop_stream(chat_id)
             except Exception as exc:  # noqa: BLE001 — watchdog must never die
                 LOGGER.warning("auto_leave_watchdog failed for %s: %s", chat_id, exc)
-
