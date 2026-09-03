@@ -39,10 +39,9 @@ WHAT THIS PATCH DOES
 Call `apply_pytgcalls_probe_patch()` once at import time of call.py.
 """
 from __future__ import annotations
-
 import logging
 import os
-
+import time
 from melody.logging import redact_sensitive_text
 
 log = logging.getLogger(__name__)
@@ -320,6 +319,14 @@ _REMOTE_CHECK_BUDGET = min(
     _cloud_budget if _IS_CLOUD else _REMOTE_CHECK_TIMEOUT,
 )
 _remote_probe_disabled = False
+try:
+    _REMOTE_CHECK_CACHE_TTL = max(
+        0.5, float(os.getenv("REMOTE_CHECK_CACHE_TTL", "10"))
+    )
+except (TypeError, ValueError):
+    _REMOTE_CHECK_CACHE_TTL = 10.0
+_remote_reach_cache: dict[str, float] = {}
+_REMOTE_REACH_CACHE_MAX = 256
 
 
 def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) -> bool:
@@ -428,15 +435,26 @@ async def _remote_reachable(url: str, headers: dict | None = None) -> bool:
 
     if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
         return False
+    now = time.monotonic()
+    cached_until = _remote_reach_cache.get(url, 0.0)
+    if cached_until > now:
+        return True
     loop = asyncio.get_running_loop()
     try:
         from melody.core.pools import IO_POOL
-        return await asyncio.wait_for(
+        reachable = await asyncio.wait_for(
             loop.run_in_executor(
                 IO_POOL, _http_reachable_sync, url, _REMOTE_CHECK_BUDGET, headers
             ),
             timeout=_REMOTE_CHECK_BUDGET + 0.25,
         )
+        if reachable:
+            _remote_reach_cache[url] = time.monotonic() + _REMOTE_CHECK_CACHE_TTL
+            if len(_remote_reach_cache) > _REMOTE_REACH_CACHE_MAX:
+                cutoff = sorted(_remote_reach_cache, key=_remote_reach_cache.get)
+                for old_url in cutoff[: len(_remote_reach_cache) - _REMOTE_REACH_CACHE_MAX]:
+                    _remote_reach_cache.pop(old_url, None)
+        return bool(reachable)
     except Exception:
         return False
 
@@ -488,16 +506,26 @@ def apply_pytgcalls_probe_patch() -> None:
             # A live URL is played straight away (no probe, no download
             # fallback); only a genuinely dead URL falls through to ffprobe
             # and the download path below.
+            if ".m3u8" in str(path).lower():
+                log.info("⚡ HLS source detected — skipping remote preflight.")
+                return None
             if await _remote_reachable(path, stream_headers):
                 log.info(
                     "⚡ remote source reachable — skipping ffprobe pre-check, "
                     "playing directly."
                 )
                 return None
-            # Expected, recoverable fallback (the download path handles it),
-            # so this must not look like an error in the logs.
+            # The ranged GET is the authoritative, bounded remote preflight.
+            # Do not fall through to py-tgcalls' ffprobe here: on a blocked or
+            # throttled googlevideo URL ffprobe can spend 4s twice and then
+            # raise JSONDecodeError/ProcessLookupError. The local download is
+            # already racing in _stream_track(), so fail immediately and let
+            # that healthy fallback win instead of adding 8-15s of silence.
             log.debug(
-                "remote source did not answer a ranged GET — verifying with ffprobe."
+                "remote source failed ranged preflight — using download fallback."
+            )
+            raise StreamProbeUnavailable(
+                "remote source failed bounded ranged preflight"
             )
         attempts = (1,) if local else (1, 2)
         for attempt in attempts:
