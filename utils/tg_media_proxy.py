@@ -29,7 +29,16 @@ try:
     _FIRST_CHUNK_TIMEOUT = max(2.0, float(os.getenv("TG_PROXY_FIRST_CHUNK_TIMEOUT", "8")))
 except (TypeError, ValueError):
     _FIRST_CHUNK_TIMEOUT = 8.0
+try:
+    _CHUNK_TIMEOUT = max(5.0, float(os.getenv("TG_PROXY_CHUNK_TIMEOUT", "20")))
+except (TypeError, ValueError):
+    _CHUNK_TIMEOUT = 20.0
+try:
+    _MAX_RESUME_ATTEMPTS = max(1, int(os.getenv("TG_PROXY_RESUME_ATTEMPTS", "8")))
+except (TypeError, ValueError):
+    _MAX_RESUME_ATTEMPTS = 8
 _PROXY_TTL = 6 * 3600.0
+
 try:
     _PROXY_CONCURRENCY = max(1, int(os.getenv("TG_PROXY_CONCURRENCY", "12")))
 except (TypeError, ValueError):
@@ -135,43 +144,88 @@ async def _media_handler(request: web.Request) -> web.StreamResponse:
         except (ClientConnectionResetError, ClientConnectionError, ConnectionResetError, BrokenPipeError):
             LOGGER.debug("telegram media proxy client disconnected before headers")
             return response
-        first_chunk = start // _CHUNK_BYTES
-        skip = start % _CHUNK_BYTES
         remaining = length
+        position = start
         try:
-            limit = (end // _CHUNK_BYTES) - first_chunk + 1
-            iterator = entry.client.stream_media(
-                entry.message, limit=limit, offset=first_chunk
-            ).__aiter__()
-            first = True
+            # ROOT-CAUSE FIX (Heroku log: "stream ended early — file was still
+            # downloading", playback resumed at 23s of a 3.8 GB tagged video):
+            # a single Telegram stream_media() iterator was used for the whole
+            # range. When Telegram dropped the DC connection mid-file the
+            # iterator simply ended (or raised) and the handler wrote EOF after
+            # far fewer bytes than the advertised Content-Length. FFmpeg saw a
+            # clean end-of-file, PyTgCalls fired stream_end, and the track died
+            # seconds in. Now the body is resumable: on any mid-stream failure
+            # or premature StopAsyncIteration the proxy re-opens stream_media()
+            # at the exact chunk it stopped on and keeps writing until the full
+            # range is delivered.
+            attempts = 0
             while remaining > 0:
-                # A Telegram RPC can occasionally hang after a dropped DC
-                # connection. Bound only the first chunk aggressively so ffmpeg
-                # retries the HTTP range instead of leaving a frozen video; the
-                # established stream is allowed to run normally afterward.
-                if first:
-                    chunk = await asyncio.wait_for(
-                        iterator.__anext__(), timeout=_FIRST_CHUNK_TIMEOUT
-                    )
-                    first = False
-                else:
-                    try:
-                        chunk = await iterator.__anext__()
-                    except StopAsyncIteration:
+                chunk_index = position // _CHUNK_BYTES
+                skip = position % _CHUNK_BYTES
+                limit = (end // _CHUNK_BYTES) - chunk_index + 1
+                iterator = entry.client.stream_media(
+                    entry.message, limit=limit, offset=chunk_index
+                ).__aiter__()
+                first = True
+                try:
+                    while remaining > 0:
+                        # A Telegram RPC can hang after a dropped DC connection.
+                        # Bound every chunk so a stall is retried instead of
+                        # freezing the video forever.
+                        timeout = (
+                            _FIRST_CHUNK_TIMEOUT if first else _CHUNK_TIMEOUT
+                        )
+                        chunk = await asyncio.wait_for(
+                            iterator.__anext__(), timeout=timeout
+                        )
+                        first = False
+                        attempts = 0
+                        if skip:
+                            chunk = chunk[skip:]
+                            skip = 0
+                        if not chunk:
+                            continue
+                        piece = chunk[:remaining]
+                        await response.write(piece)
+                        # A long movie can run for hours. Refresh activity after
+                        # every chunk so the bounded registry never prunes a live
+                        # stream while a new user registers another movie.
+                        entry.touched = time.monotonic()
+                        remaining -= len(piece)
+                        position += len(piece)
+                except (
+                    ClientConnectionResetError,
+                    ClientConnectionError,
+                    ConnectionResetError,
+                    BrokenPipeError,
+                    asyncio.CancelledError,
+                ):
+                    raise
+                except (StopAsyncIteration, asyncio.TimeoutError, Exception) as exc:  # noqa: B014
+                    if remaining <= 0:
                         break
-                if skip:
-                    chunk = chunk[skip:]
-                    skip = 0
-                if not chunk:
-                    continue
-                piece = chunk[:remaining]
-                await response.write(piece)
-                # A long movie can run for hours. Refresh activity after every
-                # chunk so the bounded registry never prunes a live stream
-                # while a new user registers another movie.
-                entry.touched = time.monotonic()
-                remaining -= len(piece)
+                    attempts += 1
+                    if attempts > _MAX_RESUME_ATTEMPTS:
+                        LOGGER.warning(
+                            "telegram media proxy gave up at byte %s/%s after %s "
+                            "resume attempts (%s)",
+                            position, end, attempts, type(exc).__name__,
+                        )
+                        break
+                    LOGGER.info(
+                        "telegram media proxy resuming at byte %s/%s (%s, try %s)",
+                        position, end, type(exc).__name__, attempts,
+                    )
+                    await asyncio.sleep(min(0.4 * attempts, 2.0))
+                finally:
+                    aclose = getattr(iterator, "aclose", None)
+                    if aclose is not None:
+                        try:
+                            await aclose()
+                        except Exception:
+                            pass
             await response.write_eof()
+
         except asyncio.CancelledError:
             raise
         except (ClientConnectionResetError, ClientConnectionError, ConnectionResetError, BrokenPipeError):
