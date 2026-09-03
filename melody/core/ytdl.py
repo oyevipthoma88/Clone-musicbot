@@ -3178,7 +3178,11 @@ async def download_replied_media(client, message, video: bool = False,
                         "tagged range proxy unavailable id=%s error=%s",
                         vid, type(exc).__name__,
                     )
-                    return None
+                    # Proxy is an optimization, not the only playback route.
+                    # If localhost binding or Telegram range setup fails, keep
+                    # going through the normal atomic download below; returning
+                    # None here made a valid tagged /vplay look like a generic
+                    # media failure with no recovery attempt.
             ext = file_name.rsplit(".", 1)[-1] if "." in file_name else None
             if not ext:
                 ext = "mp4" if message.video or message.video_note else ("ogg" if message.voice else "mp3")
