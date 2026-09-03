@@ -83,6 +83,13 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
     """`stream_chat` overrides WHERE the audio is streamed (used by
     /channelplay: command typed in a group, music plays in the linked
     channel's voice chat). Replies always stay in `message.chat`."""
+    # Defensive mode guard: custom command patches or forwarded commands can
+    # lose the handler's boolean argument. Derive the mode from the actual
+    # command too, otherwise /vplay silently enters the audio-only path.
+    command_name = ""
+    if getattr(message, "command", None):
+        command_name = str(message.command[0]).lower().split("@", 1)[0]
+    video = bool(video or command_name in {"vplay", "cvplay", "vplayforce"})
     # Assistant session dead (e.g. 406 AUTH_KEY_DUPLICATED in the Heroku logs)?
     # Then no voice chat can ever be joined — say so clearly instead of letting
     # the request fail deep inside py-tgcalls after a long wait.

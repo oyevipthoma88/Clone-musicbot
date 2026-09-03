@@ -444,6 +444,12 @@ def test_prefetch_config_is_imported_and_vplay_proxy_is_local_source():
     assert "local = _is_local_source(path)" in probe
 
 
+def test_vplay_command_defensively_forces_video_mode():
+    source = (ROOT / "melody/plugins/music/play.py").read_text(encoding="utf-8")
+    assert 'command_name in {"vplay", "cvplay", "vplayforce"}' in source
+    assert "video = bool(video or command_name" in source
+
+
 def test_bare_youtube_ids_use_the_direct_metadata_route():
     source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     assert 're.fullmatch(r"[A-Za-z0-9_-]{11}", url_or_query.strip())' in source
