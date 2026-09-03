@@ -61,13 +61,14 @@ if _IS_CLOUD_RUNTIME:
     _DOWNLOAD_START_DELAY = 0.0
 
 # How long py-tgcalls gets to open a direct CDN URL before we give up on it.
-# Cloud googlevideo routes can pass the reachability probe and still need 6–10s
-# for the first media response; the old 4s watchdog caused valid direct streams
-# to be discarded and replaced by a full download.
+# Cloud googlevideo routes can occasionally need several seconds for the
+# first media response. Keep a bounded but shorter default so a dead/blank
+# direct source falls back quickly instead of making /vplay feel stuck.
+# Override with PLAY_PROBE_TIMEOUT when a particular cloud region is slower.
 try:
-    _PLAY_PROBE_TIMEOUT = max(2.0, float(os.getenv("PLAY_PROBE_TIMEOUT", "10")))
+    _PLAY_PROBE_TIMEOUT = max(2.0, float(os.getenv("PLAY_PROBE_TIMEOUT", "7")))
 except Exception:
-    _PLAY_PROBE_TIMEOUT = 10.0
+    _PLAY_PROBE_TIMEOUT = 7.0
 try:
     _LOCAL_PROXY_PLAY_TIMEOUT = max(
         _PLAY_PROBE_TIMEOUT,
@@ -305,19 +306,20 @@ def _get_audio_quality():
 def _get_video_quality():
     """Return the VideoQuality used for /vplay-style video streams.
 
-    1080p is the default for sharp vplay output. Deployments with a small
-    CPU/uplink can lower it explicitly with VIDEO_QUALITY=720p, 480p, or 360p.
+    720p is the default for reliable Telegram video output. Deployments with
+    a stronger CPU/uplink can raise it explicitly with VIDEO_QUALITY=1080p;
+    constrained deployments can use 480p or 360p.
     """
     from pytgcalls.types import VideoQuality
 
-    wanted = (os.getenv("VIDEO_QUALITY") or "1080p").strip().lower()
+    wanted = (os.getenv("VIDEO_QUALITY") or "720p").strip().lower()
     table = {
         "1080p": "FHD_1080p",
         "720p": "HD_720p",
         "480p": "SD_480p",
         "360p": "SD_360p",
     }
-    name = table.get(wanted, "FHD_1080p")
+    name = table.get(wanted, "HD_720p")
     return getattr(VideoQuality, name, None) or VideoQuality.SD_480p
 
 

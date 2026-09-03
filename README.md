@@ -3,7 +3,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python" />
   <img src="https://img.shields.io/badge/Pyrogram-2.0.106-orange?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/PyTgCalls-0.9.32-green?style=for-the-badge" />
+  <img src="https://img.shields.io/badge/PyTgCalls-2.3.3-green?style=for-the-badge" />
   <img src="https://img.shields.io/badge/MongoDB-Atlas-brightgreen?style=for-the-badge&logo=mongodb" />
 </p>
 
@@ -37,6 +37,8 @@
 | `GENIUS_API_TOKEN` | From [genius.com/api-clients](https://genius.com/api-clients) | ❌ |
 | `YT_COOKIES` | Base64-encoded cookies.txt for YouTube | ❌ |
 | `AUTOPLAY` | Enable autoplay by default (default: true) | ❌ |
+| `VIDEO_QUALITY` | `/vplay` output quality: 720p default; 1080p/480p/360p supported | ❌ |
+| `PLAY_PROBE_TIMEOUT` | Seconds allowed for direct stream handoff before fallback (default: 7) | ❌ |
 
 ### MongoDB runtime policy
 The live bot uses **only** `MONGO_DB_URI`, which must point to the new MongoDB Atlas cluster. Do not configure any second MongoDB URI in Heroku or in the bot environment. Never commit or paste a MongoDB URI into source control or chat.

@@ -4468,7 +4468,7 @@ def _max_stream_height() -> int:
         "720p": 720,
         "480p": 480,
         "360p": 360,
-    }.get((_os.getenv("VIDEO_QUALITY") or "1080p").strip().lower(), 1080)
+    }.get((_os.getenv("VIDEO_QUALITY") or "720p").strip().lower(), 720)
 
 
 def _pick_stream_formats(info: dict, want_video: bool) -> dict:
@@ -4564,7 +4564,7 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
         return f.get("height") or 0
 
     # LAG FIX: keep the picked video within the same cap the VC actually
-    # broadcasts at (VIDEO_QUALITY, default 480p). Streaming a 720p source
+    # broadcasts at (VIDEO_QUALITY, default 720p). Streaming a higher source
     # only to downscale it wastes bandwidth and CPU and causes the stutter.
     cap = _max_stream_height()
 

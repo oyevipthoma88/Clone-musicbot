@@ -452,13 +452,13 @@ def test_vplay_command_defensively_forces_video_mode():
     assert "video = bool(video or command_name" in source
 
 
-def test_vplay_defaults_to_1080p_and_autoplay_preserves_video_mode():
+def test_vplay_defaults_to_720p_and_autoplay_preserves_video_mode():
     call = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
     ytdl = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     autoplay = (ROOT / "melody/core/autoplay.py").read_text(encoding="utf-8")
-    assert 'os.getenv("VIDEO_QUALITY") or "1080p"' in call
-    assert 'os.getenv("VIDEO_QUALITY") or "1080p"' in ytdl
-    assert 'VIDEO_QUALITY=720p' in call
+    assert 'os.getenv("VIDEO_QUALITY") or "720p"' in call
+    assert 'os.getenv("VIDEO_QUALITY") or "720p"' in ytdl
+    assert 'PLAY_PROBE_TIMEOUT", "7"' in call
     assert "get_last_user_mode" in autoplay
     assert "video=get_last_user_mode(chat_id)" in autoplay
 

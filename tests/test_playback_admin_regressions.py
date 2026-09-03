@@ -155,9 +155,9 @@ def test_direct_resolver_allows_authenticated_yt_dlp_fallback_time():
 
 def test_remote_direct_play_allows_slow_cdn_first_response():
     source = _source("melody/core/call.py")
-    assert 'os.getenv("PLAY_PROBE_TIMEOUT", "10")' in source
-    assert 'valid direct streams' in source
-    assert '6–10s' in source
+    assert 'os.getenv("PLAY_PROBE_TIMEOUT", "7")' in source
+    assert 'direct CDN URL' in source
+    assert 'bounded but shorter default' in source
 
 
 def test_cloud_playback_uses_audio_only_early_handoff_and_keeps_video_safe():
