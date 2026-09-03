@@ -2890,10 +2890,25 @@ async def pause_stream(chat_id: int) -> bool:
 
 
 async def resume_stream(chat_id: int) -> bool:
-    """Resume playback. Returns False if nothing is actually playing."""
+    """Resume playback. Returns False if nothing is actually playing.
+
+    Video streams use a local Telegram range proxy and may be in the middle of
+    a growing-file handoff. PyTgCalls' native resume RPC can wait indefinitely
+    on that stream and trigger the TimeoutError seen in production. Re-issuing
+    the current video stream at its measured position is deterministic and also
+    keeps audio/video aligned.
+    """
     if not _pytgcalls or not _active.get(chat_id):
         _forget_call_state(chat_id)
         return False
+    if is_video_active(chat_id):
+        try:
+            position = get_playback_position(chat_id)
+            await seek_stream(chat_id, position)
+            LOGGER.info("resume_stream: video resumed via fresh MediaStream at %ss", position)
+            return True
+        except Exception as exc:
+            LOGGER.debug("video MediaStream resume failed for %s; trying native resume: %s", chat_id, exc)
     try:
         await asyncio.wait_for(_pytgcalls.resume(chat_id), timeout=_CONTROL_RPC_TIMEOUT)
         return True

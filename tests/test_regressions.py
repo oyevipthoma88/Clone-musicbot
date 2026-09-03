@@ -463,6 +463,13 @@ def test_vplay_defaults_to_1080p_and_autoplay_preserves_video_mode():
     assert "video=get_last_user_mode(chat_id)" in autoplay
 
 
+def test_video_resume_rebuilds_stream_instead_of_native_timeout_prone_resume():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert "if is_video_active(chat_id):" in source
+    assert "await seek_stream(chat_id, position)" in source
+    assert "video resumed via fresh MediaStream" in source
+
+
 def test_bare_youtube_ids_use_the_direct_metadata_route():
     source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     assert 're.fullmatch(r"[A-Za-z0-9_-]{11}", url_or_query.strip())' in source
