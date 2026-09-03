@@ -177,6 +177,18 @@ def _is_local_file(path) -> bool:
         return False
 
 
+def _is_local_proxy_url(path) -> bool:
+    """Return True for the in-process Telegram range proxy URL."""
+    return isinstance(path, str) and path.lower().startswith(
+        ("http://127.0.0.1:", "http://localhost:")
+    )
+
+
+def _is_local_source(path) -> bool:
+    """Treat local files and our localhost media proxy as local sources."""
+    return _is_local_file(path) or _is_local_proxy_url(path)
+
+
 def _size(path) -> int:
     try:
         return os.path.getsize(path)
@@ -450,7 +462,7 @@ def apply_pytgcalls_probe_patch() -> None:
         import asyncio as _asyncio
 
         last_exc: BaseException | None = None
-        local = _is_local_file(path)
+        local = _is_local_source(path)
         stream_headers = None
         if len(args) > 1 and isinstance(args[1], dict):
             stream_headers = args[1]

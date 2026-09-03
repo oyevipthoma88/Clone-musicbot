@@ -436,6 +436,14 @@ def test_remote_probe_uses_dedicated_io_pool():
     assert "loop.run_in_executor(\n                IO_POOL" in source
 
 
+def test_prefetch_config_is_imported_and_vplay_proxy_is_local_source():
+    call = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    probe = (ROOT / "utils/pytgcalls_patch.py").read_text(encoding="utf-8")
+    assert "from melody.config import Config" in call
+    assert "def _is_local_proxy_url(path)" in probe
+    assert "local = _is_local_source(path)" in probe
+
+
 def test_bare_youtube_ids_use_the_direct_metadata_route():
     source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     assert 're.fullmatch(r"[A-Za-z0-9_-]{11}", url_or_query.strip())' in source

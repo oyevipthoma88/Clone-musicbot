@@ -104,6 +104,7 @@ from pyrogram.errors import (
     UserBannedInChannel,
 )
 from melody.logging import LOGGER, redact_sensitive_text, send_error_log
+from melody.config import Config
 from melody.core.queue import (
     get_current, set_current, pop_next, clear_queue,
     get_volume, set_volume_local, is_autoplay_on, get_queue, get_loop,
