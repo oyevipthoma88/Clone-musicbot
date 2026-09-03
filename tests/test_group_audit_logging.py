@@ -39,3 +39,18 @@ def test_bot_added_uses_rich_audit_logger():
     source = (ROOT / "melody/plugins/misc/start.py").read_text(encoding="utf-8")
     assert "log_group_event(" in source
     assert '"bot_added_to_group"' in source
+
+
+def test_normal_playback_log_contains_identity_media_mode_and_timing():
+    source = (ROOT / "melody/plugins/music/play.py").read_text(encoding="utf-8")
+    for marker in (
+        "#play #",
+        "Uploader:",
+        "Video ID:",
+        "Requested by:",
+        "Group:",
+        "Mode:",
+        "Timing: search=",
+        "Result:",
+    ):
+        assert marker in source

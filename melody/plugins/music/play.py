@@ -463,10 +463,17 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
 
         activity_label = "Force Played" if force else ("Now Playing" if playing_now else "Queued")
         spawn(log_activity(
+            f"#play #{'vplay' if video else 'play'}\n"
             f"🎵 <b>{activity_label}</b>\n"
             f"• Song: <code>{html.escape(info['title'][:60])}</code>\n"
-            f"• Requested by: {html.escape(requester_name or 'Unknown')} (<code>{requester_id}</code>)\n"
-            f"• Chat: {html.escape(chat.title or 'Private')} (<code>{chat.id}</code>)"
+            f"• Uploader: <code>{html.escape(str(info.get('uploader') or 'Unknown'))}</code>\n"
+            f"• Video ID: <code>{html.escape(str(info.get('id') or '—'))}</code>\n"
+            f"• Requested by: {html.escape(requester_name or 'Unknown')}"
+            f" (@{html.escape(user.username) if user and user.username else '—'}) (<code>{requester_id}</code>)\n"
+            f"• Group: <b>{html.escape(chat.title or 'Private')}</b> (<code>{chat.id}</code>)\n"
+            f"• Mode: <code>{'VIDEO' if video else 'AUDIO'}</code> · Result: <b>{_outcome.upper()}</b>\n"
+            f"• Timing: search=<code>{_t_info:.2f}s</code> join=<code>{_t_join - _t_info:.2f}s</code> "
+            f"stream=<code>{_stream_elapsed:.2f}s</code> total=<code>{_total_elapsed:.2f}s</code>"
         ))
 
         status_label = "Force Played" if force else ("Now Playing" if playing_now else "Added to Queue")
