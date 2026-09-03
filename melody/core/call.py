@@ -749,7 +749,7 @@ async def _prefetch_upcoming(chat_id: int) -> None:
     """
     from melody.core.ytdl import (
         cached_file_path, download_audio, is_download_cancelled,
-        on_cloud_host, resolve_stream_urls, should_try_direct_stream,
+        resolve_stream_urls, should_try_direct_stream,
     )
     # Use the same deployment-aware profile as Config. Reading the raw env
     # here used to see an absent MEMORY_LIMIT_MB as 512 even on Heroku's 1 GB

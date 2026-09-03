@@ -12,7 +12,6 @@ import asyncio
 import importlib
 import pkgutil
 import platform
-import os
 import uvloop
 from melody.logging import LOGGER
 from melody.config import Config

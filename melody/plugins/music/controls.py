@@ -5,8 +5,6 @@ BUG FIX: @error_handler moved OUTSIDE @admin_or_auth
 import html
 import asyncio
 
-# Keep Genius/ONNX work off asyncio's tiny default executor (see pools.py).
-from melody.core.pools import IO_POOL
 from pyrogram import Client, filters
 from pyrogram.types import Message, CallbackQuery
 from melody import bot

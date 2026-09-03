@@ -4,7 +4,7 @@
 #   Bot    : @ApexVibesBot
 # ════════════════════════════════════════════════════════════
 
-FROM nikolaik/python-nodejs:python3.10-nodejs18
+FROM nikolaik/python-nodejs:python3.11-nodejs18
 
 # Install system dependencies
 RUN apt-get update -y && apt-get upgrade -y \

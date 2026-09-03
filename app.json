@@ -66,6 +66,21 @@
       "value": "true",
       "required": false
     },
+    "VIDEO_QUALITY": {
+      "description": "Video quality for /vplay (720p is the stable default; 1080p/480p/360p supported)",
+      "value": "720p",
+      "required": false
+    },
+    "PLAY_PROBE_TIMEOUT": {
+      "description": "Seconds allowed for direct CDN handoff before fallback download",
+      "value": "7",
+      "required": false
+    },
+    "DIRECT_STREAM": {
+      "description": "Prefer direct CDN streaming; set false to force the download fallback",
+      "value": "true",
+      "required": false
+    },
     "MUSIC_ONLY_MODE": {
       "description": "Load only music handlers to reduce startup/RAM (true/false)",
       "value": "false",
