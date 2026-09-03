@@ -995,6 +995,10 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
             # the audio-only stream. Either way the microphone ffmpeg never
             # depends on the video download finishing.
             audio_path=audio_url,
+            # Never silently accept an audio-only stream for /vplay. The old
+            # AUTO_DETECT behavior could swallow NoVideoSourceFound and still
+            # publish a blank/blurred screen with only the audio track alive.
+            video_flags=MediaStream.Flags.REQUIRED,
             headers=headers,
             ffmpeg_parameters=ffmpeg_params,
         )
@@ -1067,6 +1071,10 @@ def _local_media_stream(chat_id: int, filepath: str, video: bool, seconds: int =
             filepath,
             audio_parameters=audio_quality,
             video_parameters=_get_video_quality(),
+            # A video request must fail loudly rather than being negotiated as
+            # an audio-only call when probing a bad/partial source.
+            video_flags=MediaStream.Flags.REQUIRED,
+            audio_path=filepath,
             ffmpeg_parameters=_ffmpeg_params(chat_id, seconds, source=filepath) or None,
         )
     return MediaStream(
