@@ -136,7 +136,13 @@ class Config:
     # provider is pre-warmed on every non-low-memory worker. This removes the
     # first-play 4-8s token-provider startup penalty without affecting 512 MB
     # dynos, where the low-memory profile still disables it automatically.
-    MEMORY_LIMIT_MB: int = _env_int("MEMORY_LIMIT_MB", 512)
+    # Heroku dynos in this deployment expose a 1 GB worker quota even when
+    # MEMORY_LIMIT_MB is not explicitly configured. Treat DYNO as 1 GB by
+    # default so the lightweight bgutil startup warmup actually runs; users
+    # with smaller workers can still set MEMORY_LIMIT_MB explicitly.
+    MEMORY_LIMIT_MB: int = _env_int(
+        "MEMORY_LIMIT_MB", 1024 if os.getenv("DYNO") else 512
+    )
     _LOW_MEMORY_PROFILE: bool = MEMORY_LIMIT_MB <= 768
     STARTUP_WARMUPS: bool = (
         _env_bool("STARTUP_WARMUPS", False) and not _LOW_MEMORY_PROFILE
