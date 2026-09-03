@@ -277,12 +277,13 @@ def test_autoplay_duration_parser_rejects_four_hour_related_media():
     assert "if track_duration > AUTOPLAY_MAX_DURATION:" in source
 
 
-def test_queued_cloud_prefetch_skips_full_download_after_resolve_failure():
+def test_queued_cloud_prefetch_is_bounded_and_warms_metadata():
     source = _source("melody/core/call.py")
     assert "cached_file_path, download_audio, is_download_cancelled" in source
     assert "on_cloud_host, resolve_stream_urls, should_try_direct_stream" in source
-    assert '"prefetch: cloud download skipped for %s to protect interactive playback"' in source
-    assert "if on_cloud_host() and not _cloud_prefetch_enabled():" in source
+    assert "_PREFETCH_MAX_BYTES = 100 * 1024 * 1024" in source
+    assert "_prefetch_size_estimate(track)" in source
+    assert '"prefetch: metadata-only for %s estimated=%.1fMB limit=100MB"' in source
 
 
 def test_priority_download_gate_orders_and_cleans_waiters():

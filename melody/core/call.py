@@ -728,6 +728,16 @@ async def _play_next(chat_id: int):
     await _hard_leave(chat_id)
 
 
+_PREFETCH_MAX_BYTES = 100 * 1024 * 1024
+# Conservative upper-bound estimates used before downloading a queued item.
+# Audio is estimated at 256 kbps; video at 1.5 Mbps. If the estimate exceeds
+# 100 MB, we warm only its direct URL metadata and leave the file off disk.
+def _prefetch_size_estimate(track) -> int:
+    duration = max(0, int(getattr(track, "duration", 0) or 0))
+    bitrate = 1_500_000 if bool(getattr(track, "video", False)) else 256_000
+    return (duration * bitrate) // 8
+
+
 async def _prefetch_upcoming(chat_id: int) -> None:
     """Warm upcoming manual tracks without delaying interactive playback.
 
@@ -740,16 +750,16 @@ async def _prefetch_upcoming(chat_id: int) -> None:
         cached_file_path, download_audio, is_download_cancelled,
         on_cloud_host, resolve_stream_urls, should_try_direct_stream,
     )
-    from melody.core.autoplay import _cloud_prefetch_enabled
-
-    try:
-        memory_mb = int(os.getenv("MEMORY_LIMIT_MB", "512"))
-    except ValueError:
-        memory_mb = 512
+    # Use the same deployment-aware profile as Config. Reading the raw env
+    # here used to see an absent MEMORY_LIMIT_MB as 512 even on Heroku's 1 GB
+    # worker and silently disabled useful queue warming.
+    memory_mb = int(getattr(Config, "MEMORY_LIMIT_MB", 512) or 512)
     try:
         requested = max(1, int(os.getenv("PREFETCH_WORKERS", "2")))
     except ValueError:
         requested = 2
+    # Never let prefetch consume all bandwidth/CPU: one item is safest on a
+    # small worker, two independent items are allowed on the 1 GB profile.
     prefetch_workers = min(2, requested) if memory_mb >= 1024 else 1
 
     queue = get_queue(chat_id)
@@ -765,17 +775,21 @@ async def _prefetch_upcoming(chat_id: int) -> None:
         async def _warm(upcoming, rank: int) -> None:
             inflight.add(upcoming.video_id)
             try:
-                if should_try_direct_stream() and not on_cloud_host():
+                if should_try_direct_stream():
+                    # Warm URL metadata on every cloud worker. This is cheap
+                    # and makes /skip resolve from memory instead of waiting on
+                    # a fresh YouTube extraction.
                     try:
                         await resolve_stream_urls(
                             upcoming.video_id, want_video=upcoming.video,
                         )
                     except Exception:
                         pass
-                if on_cloud_host() and not _cloud_prefetch_enabled():
+                estimate = _prefetch_size_estimate(upcoming)
+                if estimate > _PREFETCH_MAX_BYTES:
                     LOGGER.info(
-                        "prefetch: cloud download skipped for %s to protect interactive playback",
-                        upcoming.video_id,
+                        "prefetch: metadata-only for %s estimated=%.1fMB limit=100MB",
+                        upcoming.video_id, estimate / (1024 * 1024),
                     )
                     return
                 path = await download_audio(
