@@ -59,3 +59,28 @@ def test_direct_resolver_keeps_hls_as_a_valid_last_resort():
     assert '["tv_simply", "tv"]' in source
     assert "hlsManifestUrl" in source
     assert "download fallback engaged" in (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+
+
+def test_audio_picker_prefers_progressive_muxed_source_over_hls_manifest():
+    from melody.core.ytdl import _pick_stream_formats
+
+    result = _pick_stream_formats({
+        "hlsManifestUrl": "https://cdn.example/live.m3u8",
+        "formats": [
+            {
+                "url": "https://cdn.example/muxed.mp4",
+                "protocol": "https",
+                "vcodec": "avc1",
+                "acodec": "mp4a",
+                "height": 360,
+                "tbr": 450,
+            },
+            {
+                "url": "https://cdn.example/live.m3u8",
+                "protocol": "m3u8_native",
+                "vcodec": "none",
+                "acodec": "aac",
+            },
+        ],
+    }, False)
+    assert result["audio"] == "https://cdn.example/muxed.mp4"

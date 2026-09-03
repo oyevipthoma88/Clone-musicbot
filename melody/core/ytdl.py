@@ -4541,11 +4541,19 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
         audio_pick = max(capped or audio_only_fmts, key=abr)
 
     if not want_video:
-        # If YouTube exposes an HLS manifest but no audio-only HTTPS format,
-        # prefer the manifest over a WEB progressive itag (usually 18). The
-        # latter can be a large muxed MP4 whose signed googlevideo URL is
-        # rejected from cloud IPs, forcing a full download; HLS is designed for
-        # progressive playback and avoids that multi-second fallback.
+        # Prefer a usable progressive HTTPS source whenever one exists. HLS is
+        # reliable as a last resort, but opening/re-parsing a manifest and
+        # waiting for its first segment caused 8-14s spikes in the production
+        # logs even after direct URL resolution had completed. A low-bitrate
+        # muxed HTTPS itag is still efficient for an audio-only MediaStream:
+        # ffmpeg selects only its audio track and no camera is negotiated.
+        if not audio_pick and muxed_fmts:
+            cheapest = min(muxed_fmts, key=lambda f: (f.get("height") or 0,
+                                                      f.get("tbr") or 0))
+            return {"audio": cheapest["url"], "video": None}
+        # If no progressive muxed URL exists, use HLS before giving up on
+        # direct playback. This remains important for cloud responses that are
+        # genuinely HLS-only.
         hls_manifest = info.get("hlsManifestUrl")
         if not audio_pick and hls_manifest:
             return {"audio": hls_manifest, "video": None}
