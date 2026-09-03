@@ -61,12 +61,19 @@ def test_direct_resolver_keeps_hls_as_a_valid_last_resort():
     assert "download fallback engaged" in (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
 
 
-def test_audio_picker_prefers_progressive_muxed_source_over_hls_manifest():
+def test_audio_picker_prefers_audio_only_source_over_hls_manifest():
     from melody.core.ytdl import _pick_stream_formats
 
     result = _pick_stream_formats({
         "hlsManifestUrl": "https://cdn.example/live.m3u8",
         "formats": [
+            {
+                "url": "https://cdn.example/audio.webm",
+                "protocol": "https",
+                "vcodec": "none",
+                "acodec": "opus",
+                "abr": 96,
+            },
             {
                 "url": "https://cdn.example/muxed.mp4",
                 "protocol": "https",
@@ -83,4 +90,21 @@ def test_audio_picker_prefers_progressive_muxed_source_over_hls_manifest():
             },
         ],
     }, False)
-    assert result["audio"] == "https://cdn.example/muxed.mp4"
+    assert result["audio"] == "https://cdn.example/audio.webm"
+
+
+def test_audio_picker_keeps_hls_alternate_for_signed_url_recovery():
+    from melody.core.ytdl import _pick_stream_formats
+
+    result = _pick_stream_formats({
+        "hlsManifestUrl": "https://cdn.example/fallback.m3u8",
+        "formats": [{
+            "url": "https://cdn.example/signed.webm",
+            "protocol": "https",
+            "vcodec": "none",
+            "acodec": "opus",
+            "abr": 96,
+        }],
+    }, False)
+    assert result["audio"] == "https://cdn.example/signed.webm"
+    assert result["fallback_audio"].endswith("fallback.m3u8")

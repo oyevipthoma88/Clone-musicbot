@@ -4541,19 +4541,12 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
         audio_pick = max(capped or audio_only_fmts, key=abr)
 
     if not want_video:
-        # Prefer a usable progressive HTTPS source whenever one exists. HLS is
-        # reliable as a last resort, but opening/re-parsing a manifest and
-        # waiting for its first segment caused 8-14s spikes in the production
-        # logs even after direct URL resolution had completed. A low-bitrate
-        # muxed HTTPS itag is still efficient for an audio-only MediaStream:
-        # ffmpeg selects only its audio track and no camera is negotiated.
-        if not audio_pick and muxed_fmts:
-            cheapest = min(muxed_fmts, key=lambda f: (f.get("height") or 0,
-                                                      f.get("tbr") or 0))
-            return {"audio": cheapest["url"], "video": None}
-        # If no progressive muxed URL exists, use HLS before giving up on
-        # direct playback. This remains important for cloud responses that are
-        # genuinely HLS-only.
+        # When an audio-only HTTPS format exists it is the fastest and safest
+        # choice. If it does not, prefer HLS over a muxed HTTPS itag: cloud
+        # YouTube responses frequently expose muxed googlevideo URLs that are
+        # rejected from Heroku, while the HLS manifest remains reachable. This
+        # ordering keeps direct playback reliable instead of turning a bad
+        # muxed choice into a 10s+ download fallback.
         hls_manifest = info.get("hlsManifestUrl")
         if not audio_pick and hls_manifest:
             return {"audio": hls_manifest, "video": None}
@@ -4584,7 +4577,14 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
                                                           f.get("tbr") or 0))
                 return {"audio": cheapest["url"], "video": None}
             return {}
-        return {"audio": audio_pick["url"], "video": None}
+        picked = {"audio": audio_pick["url"], "video": None}
+        # Keep a second, independently playable route. Some cloud POPs reject
+        # the signed audio-only URL while serving the manifest normally. The
+        # playback layer can switch to this alternate without waiting for a
+        # complete download.
+        if info.get("hlsManifestUrl"):
+            picked["fallback_audio"] = info["hlsManifestUrl"]
+        return picked
 
     def height(f):
         return f.get("height") or 0

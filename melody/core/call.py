@@ -1037,7 +1037,7 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
             ffmpeg_parameters=ffmpeg_params,
         )
 
-    return MediaStream(
+    media_stream = MediaStream(
         audio_url,
         audio_parameters=_get_audio_quality(),
         # Explicit audio_path: without it PyTgCalls only derives the microphone
@@ -1050,6 +1050,14 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
         headers=headers,
         ffmpeg_parameters=ffmpeg_params,
     )
+    # Preserve an HLS alternate supplied by the picker. The first signed CDN
+    # URL can be rejected by one cloud POP even though the manifest is valid;
+    # _stream_track() uses this route before conceding to a full download.
+    try:
+        media_stream._melody_fallback_url = urls.get("fallback_audio")
+    except Exception:
+        pass
+    return media_stream
 
 
 def get_speed(chat_id: int) -> float:
@@ -1827,6 +1835,41 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                     _is_probe_error(play_exc) or isinstance(play_exc, asyncio.TimeoutError)
                 ):
                     raise
+
+                # A signed audio-only googlevideo URL can be rejected by the
+                # current cloud POP while the same extractor response's HLS
+                # manifest is still usable. Try that alternate direct route
+                # before waiting for the full-file fallback download.
+                alternate_url = getattr(stream, "_melody_fallback_url", None)
+                if alternate_url and not video:
+                    try:
+                        alternate = MediaStream(
+                            alternate_url,
+                            audio_parameters=_get_audio_quality(),
+                            audio_path=alternate_url,
+                            video_flags=MediaStream.Flags.IGNORE,
+                            headers=None,
+                            ffmpeg_parameters=(
+                                _ffmpeg_params(
+                                    chat_id, start_at, source=alternate_url,
+                                    include_reconnect=False,
+                                ) or None
+                            ),
+                        )
+                        await asyncio.wait_for(
+                            _pytgcalls.play(chat_id, alternate),
+                            timeout=_PLAY_PROBE_TIMEOUT,
+                        )
+                        LOGGER.info(
+                            "Direct CDN alternate HLS route recovered %s in %s",
+                            track.video_id, chat_id,
+                        )
+                        return
+                    except Exception as alternate_exc:
+                        LOGGER.debug(
+                            "alternate direct route failed for %s: %s",
+                            track.video_id, type(alternate_exc).__name__,
+                        )
 
                 if early_file:
                     # The prefix was valid enough to return, but this particular
