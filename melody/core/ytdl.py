@@ -1575,6 +1575,14 @@ def _innertube_search_sync(query: str) -> dict | None:
     import json
 
     _SEARCH_URL = "https://www.youtube.com/youtubei/v1/search"
+    # Always initialise this before trying client contexts.  Previously, if
+    # every context returned a non-200 response or raised a network/JSON
+    # exception, the loop ended with `data` undefined.  That raised
+    # UnboundLocalError, which the async race swallowed as a generic failed
+    # source; /play then incorrectly told users that nothing matched.  A
+    # failed provider must return None so the normal yt-dlp/Invidious fallback
+    # chain can continue.
+    data = None
 
     # MODERNISED: dropped the legacy `?key=AIza...` query param and the plain
     # ANDROID client. Verified live: ANDROID answers 404 for /search (with or
