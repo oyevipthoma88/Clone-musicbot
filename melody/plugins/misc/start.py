@@ -1,0 +1,116 @@
+"""Apex Vibes start menu and lifecycle logging."""
+import html
+from pyrogram import Client, filters, enums
+from pyrogram.types import Message, InlineKeyboardMarkup, CallbackQuery
+from melody import bot
+from melody.config import Config
+from utils.decorators import error_handler
+from utils.buttons import ikb, STYLE_PRIMARY, STYLE_SUCCESS, STYLE_DANGER
+from melody.logging import log_activity
+from utils.tasks import spawn
+
+
+def _menu(owner: bool = False):
+    rows = [
+        [ikb("▶️ Play Music", style=STYLE_SUCCESS, switch_inline_query_current_chat=""),
+         ikb("🎛 Music Controls", style=STYLE_PRIMARY, callback_data="apex_music_help")],
+        [ikb("🎧 Voice Chat", style=STYLE_PRIMARY, callback_data="apex_vc_help")],
+    ]
+    if owner:
+        rows.append([ikb("👑 Owner Panel", style=STYLE_DANGER, callback_data="owner_panel")])
+    return InlineKeyboardMarkup(rows)
+
+
+_START = (
+    "<blockquote><b>𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ</b></blockquote>\n\n"
+    "YouTube music and voice-chat live support is online.\n\n"
+    "Use <code>/play song name</code> in a group voice chat."
+)
+
+_HELP = (
+    "<b>𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ Music</b>\n\n"
+    "<code>/play</code> <code>/vplay</code> <code>/pause</code> <code>/resume</code> "
+    "<code>/skip</code> <code>/stop</code> <code>/queue</code> <code>/np</code>\n"
+    "<code>/volume</code> <code>/mute</code> <code>/loop</code> <code>/shuffle</code> "
+    "<code>/seek</code> <code>/speed</code> <code>/playlist</code>\n"
+    "<code>/live</code> <code>/radio</code> <code>/joinvc</code> <code>/leavevc</code>"
+)
+
+_VC_HELP = (
+    "<b>𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ Voice Chat</b>\n\n"
+    "<code>/joinvc</code> — Join the group voice chat\n"
+    "<code>/leavevc</code> — Leave the voice chat\n"
+    "<code>/autoend on|off</code> — Stop when VC is empty\n"
+    "<code>/vcnotify on|off</code> — Toggle live VC notifications"
+)
+
+
+def _back():
+    return InlineKeyboardMarkup([[ikb("↩ Back", style=STYLE_PRIMARY, callback_data="apex_start_home")]])
+
+
+@bot.on_message(filters.command("start") & filters.private)
+@error_handler
+async def start_dm(client: Client, message: Message):
+    user = message.from_user
+    if user:
+        spawn(log_activity(
+            f"#start #dm\n<b>DM /start</b>\n"
+            f"• User: <code>{html.escape(user.first_name or 'Unknown')}</code>"
+            f" (@{html.escape(user.username or '—')})\n"
+            f"• User ID: <code>{user.id}</code>"
+        ), name=f"log-dm-start-{user.id}")
+    await message.reply(_START, parse_mode=enums.ParseMode.HTML,
+                        reply_markup=_menu(bool(user and user.id == Config.OWNER_ID)))
+
+
+@bot.on_message(filters.command("start") & filters.group)
+@error_handler
+async def start_group(client: Client, message: Message):
+    await message.reply(_START, parse_mode=enums.ParseMode.HTML, reply_markup=_menu(False))
+
+
+@bot.on_message(filters.new_chat_members)
+@error_handler
+async def bot_added_to_group(client: Client, message: Message):
+    """Log only the event where this bot itself is added to a group."""
+    me = await client.get_me()
+    members = message.new_chat_members or []
+    if not any(member.id == me.id for member in members):
+        return
+    adder = message.from_user
+    group = message.chat
+    adder_name = html.escape(adder.first_name if adder else "Unknown")
+    group_name = html.escape(group.title or str(group.id))
+    spawn(log_activity(
+        f"#group_added #newchat\n<b>Apex Vibes added to group</b>\n"
+        f"• Group: <code>{group_name}</code>\n"
+        f"• Group ID: <code>{group.id}</code>\n"
+        f"• Added by: <code>{adder_name}</code>\n"
+        f"• Added by ID: <code>{adder.id if adder else '—'}</code>"
+    ), name=f"log-group-added-{group.id}")
+
+
+@bot.on_message(filters.command("help"))
+@error_handler
+async def help_command(client: Client, message: Message):
+    await message.reply(_HELP, parse_mode=enums.ParseMode.HTML, reply_markup=_menu(False))
+
+
+@bot.on_callback_query(filters.regex(r"^apex_music_help$"))
+async def music_help(client: Client, query: CallbackQuery):
+    await query.message.edit_text(_HELP, parse_mode=enums.ParseMode.HTML, reply_markup=_back())
+    await query.answer()
+
+
+@bot.on_callback_query(filters.regex(r"^apex_vc_help$"))
+async def vc_help(client: Client, query: CallbackQuery):
+    await query.message.edit_text(_VC_HELP, parse_mode=enums.ParseMode.HTML, reply_markup=_back())
+    await query.answer()
+
+
+@bot.on_callback_query(filters.regex(r"^apex_start_home$"))
+async def start_home(client: Client, query: CallbackQuery):
+    await query.message.edit_text(_START, parse_mode=enums.ParseMode.HTML,
+                                  reply_markup=_menu(bool(query.from_user and query.from_user.id == Config.OWNER_ID)))
+    await query.answer()
