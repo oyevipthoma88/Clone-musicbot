@@ -1679,6 +1679,26 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
             # recover via the slow exception path below.
             LOGGER.debug("peer miss for %s — auto-joining assistant before play()", chat_id)
             await _auto_join_assistant(chat_id)
+            # ROOT FIX (crash report: "_stream_track failed … ChannelInvalid …
+            # KeyError: 'ID not found: -100…'"): the old code called play()
+            # even when the peer STILL could not be resolved after the
+            # auto-join attempt. pytgcalls then died inside create_group_call()
+            # and the failure surfaced as a scary #crash log instead of an
+            # actionable message. If the assistant cannot address the chat,
+            # playback is impossible — say so once, cleanly, and stop.
+            if not await ensure_assistant_peer(chat_id):
+                LOGGER.warning(
+                    "assistant cannot resolve chat %s — aborting playback before play()",
+                    chat_id,
+                )
+                await _notify_playback_failed(
+                    chat_id,
+                    "⚠️ <b>Assistant account is group ka member nahi hai.</b>\n\n"
+                    "Voice chat me gaana bajane ke liye assistant ko group me add karo "
+                    "(ya bot ko <i>Invite Users via Link</i> admin permission do) "
+                    "aur phir <code>/play</code> karo 🎧",
+                )
+                return
 
         async with _get_stream_commit_lock(chat_id):
         # RACE FIX (/stop and /end came back after a few seconds):
@@ -2207,6 +2227,20 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 chat_id,
                 "❌ <b>Gaana play nahi ho paya.</b>\n\nDobara <code>/play</code> try karo.",
             )
+
+        # NOISE FIX: a missing/banned assistant, a stale peer or a chat the
+        # assistant simply cannot address is a Telegram permission state, not
+        # a bug in the bot. The group already got a clear, actionable message
+        # above, so do not spam the owner log with a #crash traceback for it.
+        if isinstance(exc, (ChannelInvalid, ChannelPrivate, PeerIdInvalid,
+                            UserBannedInChannel)) or (
+            isinstance(exc, KeyError) and "ID not found" in str(exc)
+        ):
+            LOGGER.warning(
+                "playback aborted in %s — assistant cannot address the chat (%s)",
+                chat_id, type(exc).__name__,
+            )
+            return
 
         await send_error_log(
             f"_stream_track failed in {chat_id}",
