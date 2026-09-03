@@ -134,7 +134,7 @@ async def _pick_related_track(chat_id: int) -> "Track | None":
     get_related_videos() already returns id, title, duration, url, thumbnail
     and uploader, so the Track is built directly from that data.
     """
-    from melody.core.queue import get_current, get_last_user_track
+    from melody.core.queue import get_current, get_last_user_track, get_last_user_mode
 
     history = await get_history(chat_id)
     exclude_ids = [h["id"] for h in history] if history else []
@@ -277,6 +277,10 @@ async def _pick_related_track(chat_id: int) -> "Track | None":
         requester_id=0,
         requester_name="AutoPlay",
         requested_in=chat_id,
+        # AutoPlay must continue the mode of the last human request. Without
+        # this, a /vplay session creates a default audio Track and the next
+        # automatic song silently switches back to /play (variant=a).
+        video=get_last_user_mode(chat_id),
     )
 
 

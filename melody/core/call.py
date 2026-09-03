@@ -305,20 +305,19 @@ def _get_audio_quality():
 def _get_video_quality():
     """Return the VideoQuality used for /vplay-style video streams.
 
-    720p is the default: 480p was visibly soft/blurred for HD Telegram videos.
-    Deployments with a very small CPU/uplink can still lower it explicitly with
-    VIDEO_QUALITY=480p or VIDEO_QUALITY=360p.
+    1080p is the default for sharp vplay output. Deployments with a small
+    CPU/uplink can lower it explicitly with VIDEO_QUALITY=720p, 480p, or 360p.
     """
     from pytgcalls.types import VideoQuality
 
-    wanted = (os.getenv("VIDEO_QUALITY") or "720p").strip().lower()
+    wanted = (os.getenv("VIDEO_QUALITY") or "1080p").strip().lower()
     table = {
         "1080p": "FHD_1080p",
         "720p": "HD_720p",
         "480p": "SD_480p",
         "360p": "SD_360p",
     }
-    name = table.get(wanted, "HD_720p")
+    name = table.get(wanted, "FHD_1080p")
     return getattr(VideoQuality, name, None) or VideoQuality.SD_480p
 
 
