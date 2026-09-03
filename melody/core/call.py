@@ -1497,6 +1497,13 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
     retry after `_auto_join_assistant()` successfully joined the assistant
     to the chat, so a second failure doesn't loop forever.
     """
+    # A fresh queue/autoplay handoff must always begin at normal speed. Without
+    # this guard, a previous /speed 2 command could leak into the next track
+    # and make its opening sound twice as fast before the user could correct it.
+    # Manual /play and /vplay already reset this state in play.py.
+    if start_at <= 0 and _resolving_origin.get(chat_id) in {"queue", "autoplay"}:
+        reset_playback_speed(chat_id)
+
     # If the optimistic pre-join already proved that Telegram will not let the
     # assistant create a call, do not download/probe the song before failing.
     if _vc_admin_blocked(chat_id) and not _active.get(chat_id):
