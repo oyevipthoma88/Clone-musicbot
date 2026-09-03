@@ -4,6 +4,23 @@ PyTgCalls accepts HTTP media URLs, while Kurigram's ``stream_media`` yields
 Telegram files in <=1 MiB chunks with an offset. This adapter bridges those two
 APIs: FFmpeg can issue HEAD/Range requests and the proxy fetches only the
 requested Telegram chunks. No full movie is kept in RAM or on disk.
+
+BLUR / STALL ROOT CAUSE FIX
+---------------------------
+PyTgCalls starts TWO ffmpeg processes for a video stream (camera + microphone)
+and each one opens its own HTTP range request against this proxy. The old
+handler opened a *fresh* ``stream_media()`` session per request, so a single
+1.8 GB movie was pulled from Telegram over 2-4 parallel file sessions, each
+re-reading the very same bytes. Telegram throttles parallel reads of one file:
+the log filled with ``resuming at byte 182422/1881194142 (TimeoutError)`` and
+the video feed got so few bytes per second that NTgCalls could only publish a
+heavily compressed, fully blurred picture.
+
+Now every entry owns a small pool of Telegram sessions plus a shared chunk
+cache. The second (audio) reader hits the cache instead of opening another
+Telegram session, sequential reads keep re-using one warm iterator, and each
+chunk is fetched from Telegram exactly once. That restores full throughput, so
+the VC gets a sharp picture and continuous audio.
 """
 from __future__ import annotations
 
@@ -12,7 +29,8 @@ import mimetypes
 import os
 import time
 import uuid
-from dataclasses import dataclass
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from urllib.parse import quote
 
 from aiohttp import web
@@ -22,27 +40,40 @@ from melody.logging import LOGGER
 
 _CHUNK_BYTES = 1024 * 1024
 _MAX_PROXIES = 64
-# Each video playback normally opens separate audio/video HTTP readers. Keep
-# enough independent slots for several chats without allowing unbounded Telegram
-# downloads to exhaust the worker.
-try:
-    _FIRST_CHUNK_TIMEOUT = max(2.0, float(os.getenv("TG_PROXY_FIRST_CHUNK_TIMEOUT", "8")))
-except (TypeError, ValueError):
-    _FIRST_CHUNK_TIMEOUT = 8.0
-try:
-    _CHUNK_TIMEOUT = max(5.0, float(os.getenv("TG_PROXY_CHUNK_TIMEOUT", "20")))
-except (TypeError, ValueError):
-    _CHUNK_TIMEOUT = 20.0
-try:
-    _MAX_RESUME_ATTEMPTS = max(1, int(os.getenv("TG_PROXY_RESUME_ATTEMPTS", "8")))
-except (TypeError, ValueError):
-    _MAX_RESUME_ATTEMPTS = 8
-_PROXY_TTL = 6 * 3600.0
 
-try:
-    _PROXY_CONCURRENCY = max(1, int(os.getenv("TG_PROXY_CONCURRENCY", "12")))
-except (TypeError, ValueError):
-    _PROXY_CONCURRENCY = 12
+
+def _env_float(name: str, default: float, floor: float) -> float:
+    try:
+        return max(floor, float(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int, floor: int) -> int:
+    try:
+        return max(floor, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+_FIRST_CHUNK_TIMEOUT = _env_float("TG_PROXY_FIRST_CHUNK_TIMEOUT", 8.0, 2.0)
+_CHUNK_TIMEOUT = _env_float("TG_PROXY_CHUNK_TIMEOUT", 25.0, 5.0)
+_MAX_RESUME_ATTEMPTS = _env_int("TG_PROXY_RESUME_ATTEMPTS", 6, 1)
+# How many chunks (1 MiB each) of one file stay in RAM so the audio reader can
+# be served without touching Telegram again.
+_CACHE_CHUNKS = _env_int("TG_PROXY_CACHE_CHUNKS", 48, 4)
+# Telegram sessions allowed per file. 2 covers "video reader far ahead of the
+# audio reader"; more only invites throttling.
+_SESSIONS_PER_FILE = _env_int("TG_PROXY_FILE_SESSIONS", 2, 1)
+_PROXY_TTL = 6 * 3600.0
+_PROXY_CONCURRENCY = _env_int("TG_PROXY_CONCURRENCY", 12, 1)
+
+
+@dataclass
+class _Session:
+    iterator: object | None = None
+    next_index: int = -1
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass
@@ -53,6 +84,12 @@ class _MediaEntry:
     content_type: str
     name: str
     touched: float
+    cache: "OrderedDict[int, bytes]" = field(default_factory=OrderedDict)
+    sessions: list = field(default_factory=list)
+
+    def ensure_sessions(self) -> None:
+        while len(self.sessions) < _SESSIONS_PER_FILE:
+            self.sessions.append(_Session())
 
 
 _entries: dict[str, _MediaEntry] = {}
@@ -103,6 +140,100 @@ def _parse_range(value: str | None, size: int) -> tuple[int, int] | None:
     return start, min(end, size - 1)
 
 
+async def _close_iterator(iterator: object) -> None:
+    aclose = getattr(iterator, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except Exception:  # pragma: no cover - cleanup must never raise
+        pass
+
+
+def _cache_put(entry: _MediaEntry, index: int, chunk: bytes) -> None:
+    entry.cache[index] = chunk
+    entry.cache.move_to_end(index)
+    while len(entry.cache) > _CACHE_CHUNKS:
+        entry.cache.popitem(last=False)
+
+
+def _pick_session(entry: _MediaEntry, index: int) -> _Session:
+    entry.ensure_sessions()
+    # Prefer a warm, idle session already positioned at this chunk: continuing
+    # an open iterator is what keeps Telegram throughput high.
+    for session in entry.sessions:
+        if session.next_index == index and not session.lock.locked():
+            return session
+    for session in entry.sessions:
+        if not session.lock.locked():
+            return session
+    return min(entry.sessions, key=lambda s: abs(s.next_index - index))
+
+
+async def _read_chunk(entry: _MediaEntry, index: int) -> bytes | None:
+    """Return chunk ``index`` of the file, from cache or Telegram."""
+    cached = entry.cache.get(index)
+    if cached is not None:
+        entry.cache.move_to_end(index)
+        return cached
+
+    session = _pick_session(entry, index)
+    async with session.lock:
+        cached = entry.cache.get(index)
+        if cached is not None:
+            entry.cache.move_to_end(index)
+            return cached
+
+        last_chunk = (entry.size - 1) // _CHUNK_BYTES
+        attempts = 0
+        while attempts <= _MAX_RESUME_ATTEMPTS:
+            fresh = session.iterator is None or session.next_index != index
+            if fresh:
+                await _close_iterator(session.iterator)
+                session.iterator = entry.client.stream_media(
+                    entry.message,
+                    limit=max(1, last_chunk - index + 1),
+                    offset=index,
+                ).__aiter__()
+                session.next_index = index
+            try:
+                chunk = await asyncio.wait_for(
+                    session.iterator.__anext__(),
+                    timeout=_FIRST_CHUNK_TIMEOUT if fresh else _CHUNK_TIMEOUT,
+                )
+            except StopAsyncIteration:
+                await _close_iterator(session.iterator)
+                session.iterator = None
+                session.next_index = -1
+                return None
+            except (asyncio.CancelledError, GeneratorExit):
+                raise
+            except Exception as exc:
+                await _close_iterator(session.iterator)
+                session.iterator = None
+                session.next_index = -1
+                attempts += 1
+                if attempts > _MAX_RESUME_ATTEMPTS:
+                    LOGGER.warning(
+                        "telegram media proxy gave up on chunk %s/%s after %s tries (%s)",
+                        index, last_chunk, attempts, type(exc).__name__,
+                    )
+                    return None
+                LOGGER.info(
+                    "telegram media proxy retrying chunk %s/%s (%s, try %s)",
+                    index, last_chunk, type(exc).__name__, attempts,
+                )
+                await asyncio.sleep(min(0.3 * attempts, 1.5))
+                continue
+
+            session.next_index = index + 1
+            if not chunk:
+                return None
+            _cache_put(entry, index, chunk)
+            return chunk
+        return None
+
+
 async def _media_handler(request: web.Request) -> web.StreamResponse:
     _prune()
     token = request.match_info.get("token", "")
@@ -135,8 +266,6 @@ async def _media_handler(request: web.Request) -> web.StreamResponse:
     if request.method == "HEAD":
         return web.Response(status=status, headers=headers)
 
-    # Limit active Telegram chunk streams across all chats. HEAD remains cheap,
-    # while at most four large media bodies can consume Telegram/network work.
     async with _stream_slots:
         response = web.StreamResponse(status=status, headers=headers)
         try:
@@ -147,83 +276,25 @@ async def _media_handler(request: web.Request) -> web.StreamResponse:
         remaining = length
         position = start
         try:
-            # ROOT-CAUSE FIX (Heroku log: "stream ended early — file was still
-            # downloading", playback resumed at 23s of a 3.8 GB tagged video):
-            # a single Telegram stream_media() iterator was used for the whole
-            # range. When Telegram dropped the DC connection mid-file the
-            # iterator simply ended (or raised) and the handler wrote EOF after
-            # far fewer bytes than the advertised Content-Length. FFmpeg saw a
-            # clean end-of-file, PyTgCalls fired stream_end, and the track died
-            # seconds in. Now the body is resumable: on any mid-stream failure
-            # or premature StopAsyncIteration the proxy re-opens stream_media()
-            # at the exact chunk it stopped on and keeps writing until the full
-            # range is delivered.
-            attempts = 0
             while remaining > 0:
-                chunk_index = position // _CHUNK_BYTES
+                index = position // _CHUNK_BYTES
                 skip = position % _CHUNK_BYTES
-                limit = (end // _CHUNK_BYTES) - chunk_index + 1
-                iterator = entry.client.stream_media(
-                    entry.message, limit=limit, offset=chunk_index
-                ).__aiter__()
-                first = True
-                try:
-                    while remaining > 0:
-                        # A Telegram RPC can hang after a dropped DC connection.
-                        # Bound every chunk so a stall is retried instead of
-                        # freezing the video forever.
-                        timeout = (
-                            _FIRST_CHUNK_TIMEOUT if first else _CHUNK_TIMEOUT
-                        )
-                        chunk = await asyncio.wait_for(
-                            iterator.__anext__(), timeout=timeout
-                        )
-                        first = False
-                        attempts = 0
-                        if skip:
-                            chunk = chunk[skip:]
-                            skip = 0
-                        if not chunk:
-                            continue
-                        piece = chunk[:remaining]
-                        await response.write(piece)
-                        # A long movie can run for hours. Refresh activity after
-                        # every chunk so the bounded registry never prunes a live
-                        # stream while a new user registers another movie.
-                        entry.touched = time.monotonic()
-                        remaining -= len(piece)
-                        position += len(piece)
-                except (
-                    ClientConnectionResetError,
-                    ClientConnectionError,
-                    ConnectionResetError,
-                    BrokenPipeError,
-                    asyncio.CancelledError,
-                ):
-                    raise
-                except (StopAsyncIteration, asyncio.TimeoutError, Exception) as exc:  # noqa: B014
-                    if remaining <= 0:
-                        break
-                    attempts += 1
-                    if attempts > _MAX_RESUME_ATTEMPTS:
-                        LOGGER.warning(
-                            "telegram media proxy gave up at byte %s/%s after %s "
-                            "resume attempts (%s)",
-                            position, end, attempts, type(exc).__name__,
-                        )
-                        break
-                    LOGGER.info(
-                        "telegram media proxy resuming at byte %s/%s (%s, try %s)",
-                        position, end, type(exc).__name__, attempts,
+                chunk = await _read_chunk(entry, index)
+                if not chunk:
+                    LOGGER.warning(
+                        "telegram media proxy stopped at byte %s/%s (chunk %s unavailable)",
+                        position, end, index,
                     )
-                    await asyncio.sleep(min(0.4 * attempts, 2.0))
-                finally:
-                    aclose = getattr(iterator, "aclose", None)
-                    if aclose is not None:
-                        try:
-                            await aclose()
-                        except Exception:
-                            pass
+                    break
+                if skip:
+                    chunk = chunk[skip:]
+                    if not chunk:
+                        break
+                piece = chunk[:remaining]
+                await response.write(piece)
+                entry.touched = time.monotonic()
+                remaining -= len(piece)
+                position += len(piece)
             await response.write_eof()
 
         except asyncio.CancelledError:
