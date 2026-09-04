@@ -367,13 +367,16 @@ async def _prefetch_next_locked(chat_id: int) -> "Track | None":
     # let a prefetch occupy that slot and turn the next manual request into a
     # 30-70 second wait. The next autoplay request will still resolve and
     # download the track on demand.
-    if on_cloud_host() and not _cloud_prefetch_enabled():
-        # Small dynos keep the prediction but skip the full pre-download so an
-        # interactive /play always owns the only safe yt-dlp slot.
+    if on_cloud_host() and not _cloud_prefetch_enabled() and want_video:
+        # Small dynos keep the prediction but skip only full video pre-download:
+        # video consumes much more bandwidth/disk and can contend with /play.
+        # Audio prefetch is intentionally allowed because it is the latency-
+        # critical next-track path and is canceled automatically if a manual
+        # request arrives (priority 50 < interactive priority 0).
         remember_played(chat_id, track.video_id)
         set_predownloaded(chat_id, track)
         LOGGER.info(
-            "AutoPlay: cloud pre-download skipped for %s to protect interactive playback",
+            "AutoPlay: cloud video pre-download skipped for %s to protect interactive playback",
             track.video_id,
         )
         return track

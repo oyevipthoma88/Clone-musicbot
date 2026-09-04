@@ -121,3 +121,10 @@ def test_invidious_direct_route_normalizes_adaptive_audio(monkeypatch):
     result = ytdl._resolve_stream_urls_invidious("iAIBF2ngbWY", False)
     assert result["audio"].startswith("https://cdn.example/audio.webm")
     assert result["video"] is None
+
+
+def test_cloud_autoplay_prefetch_skips_only_video_on_small_hosts():
+    source = (ROOT / "melody/core/autoplay.py").read_text(encoding="utf-8")
+    assert "and not _cloud_prefetch_enabled() and want_video" in source
+    assert "Audio prefetch is intentionally allowed" in source
+    assert "cloud video pre-download skipped" in source
