@@ -989,6 +989,19 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
                     track.video_id, want_video=video, force=False,
                 )
             except Exception as cached_exc:
+                # A negative result is single-flight and deliberately cached by
+                # ytdl.py. Forcing an immediate second resolver run defeats that
+                # protection and adds another full InnerTube/yt-dlp timeout while
+                # the local download fallback is already progressing. Only force
+                # a fresh resolve for a non-cached error (for example an expired
+                # signed URL); known-unavailable sources should yield immediately.
+                cached_failure = "cached failure" in str(cached_exc).lower()
+                if cached_failure:
+                    LOGGER.info(
+                        "#stream direct source negative-cached for %s — using download fallback",
+                        track.video_id,
+                    )
+                    return None
                 LOGGER.debug(
                     "cached direct resolve unavailable for %s (%s); retrying fresh",
                     track.video_id, cached_exc,

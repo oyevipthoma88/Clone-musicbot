@@ -51,6 +51,48 @@ from utils.thumbnails import make_thumbnail, fetch_dp, get_bot_dp, get_bot_ident
 from utils.animation import AnimatedStatus
 from utils.tasks import spawn
 
+
+def _is_stale_message_error(exc: BaseException) -> bool:
+    """Return True for Telegram errors caused by an already-gone message.
+
+    Status messages are intentionally ephemeral: users, auto-cleanup, another
+    handler, or a retry can delete them while a slow search/download is still
+    running. These errors must never turn a successful playback request into a
+    crash report.
+    """
+    name = type(exc).__name__
+    text = str(exc).upper()
+    return name in {"MessageIdInvalid", "MessageNotModified", "MessageToDeleteNotFound"} or any(
+        marker in text for marker in ("MESSAGE_ID_INVALID", "MESSAGE_NOT_MODIFIED", "MESSAGE_TO_DELETE_NOT_FOUND")
+    )
+
+
+async def _safe_processing_edit(processing, fallback_message, text, **kwargs):
+    """Edit the processing card, replying only when Telegram invalidated it."""
+    try:
+        return await processing.edit(text, **kwargs)
+    except Exception as exc:  # Telegram versions expose different exception classes
+        if not _is_stale_message_error(exc):
+            raise
+        if "MESSAGE_NOT_MODIFIED" in str(exc).upper() or type(exc).__name__ == "MessageNotModified":
+            return processing
+        try:
+            return await fallback_message.reply(text, **kwargs)
+        except Exception:
+            LOGGER.debug("processing status message disappeared in chat=%s", getattr(getattr(fallback_message, "chat", None), "id", "?"), exc_info=True)
+            return None
+
+
+async def _safe_processing_delete(processing):
+    """Best-effort cleanup that tolerates a status message deleted elsewhere."""
+    try:
+        return await processing.delete()
+    except Exception as exc:
+        if not _is_stale_message_error(exc):
+            raise
+        return None
+
+
 # Strong references to background download tasks so they aren't GC'd
 # before _stream_track picks them up via in-flight dedup in ytdl.py.
 _bg_downloads: set = set()
@@ -270,7 +312,7 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
             await abort_prejoin_if_idle(chat.id)
             await anim.stop()
             if tagged:
-                await processing.edit(
+                await _safe_processing_edit(processing, message,
                     quote_html("❌ Ye tagged file play nahi ho payi 🌸"),
                     parse_mode=enums.ParseMode.HTML,
                 )
@@ -307,14 +349,14 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
                     for i, r in enumerate(suggestions[:5], 1)
                     if r.get("id")
                 ]
-                await processing.edit(
+                await _safe_processing_edit(processing, message,
                     quote_html(text),
                     parse_mode=enums.ParseMode.HTML,
                     reply_markup=InlineKeyboardMarkup(buttons),
                 )
                 return
 
-            await processing.edit(
+            await _safe_processing_edit(processing, message,
                 quote_html(
                     "❌ <b>Kuch bhi match nahi hua</b> 🌸\n"
                     "Naam thoda alag likh ke ya artist ka naam jod ke try karo."
@@ -431,7 +473,7 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
             processing = await processing_task
             anim = await anim_task
             await anim.stop()
-            await processing.edit(
+            await _safe_processing_edit(processing, message,
                 quote_html(
                     "❌ <b>Gana play nahi ho paya.</b>\n"
                     "YouTube stream unavailable ho sakti hai ya VC handoff complete nahi hua.\n"
@@ -518,7 +560,7 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
                 parse_mode=enums.ParseMode.HTML,
                 reply_markup=play_buttons,
             )
-            await processing.delete()
+            await _safe_processing_delete(processing)
         except Exception as thumb_exc:
             from melody.logging import send_error_log
             # CHAT_SEND_PHOTOS_FORBIDDEN is an expected group-permission
@@ -547,7 +589,7 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
             # failed before delete), so edit it. But if it was already deleted
             # (partial success path), fall back to a new reply.
             try:
-                await processing.edit(
+                await _safe_processing_edit(processing, message,
                     quote_html(
                         f"🎵 <b>{html.escape(status)}</b>\n\n"
                         f"<code>{safe_title}</code>\n"
