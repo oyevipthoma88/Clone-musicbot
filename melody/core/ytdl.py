@@ -2312,9 +2312,16 @@ def _early_handoff_allowed(audio_only: bool) -> bool:
 
 
 def _early_audio_path_is_safe(path: str) -> bool:
-    """Return True only for containers whose prefix is probeable/playable."""
+    """Return True only for containers whose prefix is probeable/playable.
+
+    yt-dlp may expose native-fragment paths as ``file.webm.part-Frag159``
+    rather than the simpler ``file.webm.part``. Treat both as the underlying
+    WebM/Opus container; otherwise a valid growing audio file is rejected and
+    the caller waits for the complete download.
+    """
     name = os.path.basename(path or "").lower()
-    for suffix in (".part", ".ytdl", ".temp"):
+    name = re.sub(r"\.part(?:[-._][a-z0-9_-]+)?$", "", name)
+    for suffix in (".ytdl", ".temp", ".part"):
         while name.endswith(suffix):
             name = name[: -len(suffix)]
     ext = name.rsplit(".", 1)[-1] if "." in name else ""

@@ -134,3 +134,20 @@ def test_download_audio_requests_early_handoff_for_interactive_audio_fallback():
     assert 'allow_early=not video' in source
     assert 'return_when=asyncio.FIRST_COMPLETED' in source
     assert 'while pending and stream is None' in source
+
+
+def test_search_selection_does_not_await_speculative_direct_resolver():
+    search = (ROOT / "melody/plugins/music/search.py").read_text(encoding="utf-8")
+    assert "warm_stream = asyncio.create_task(" in search
+    assert "warm_stream.add_done_callback(_consume_warm_result)" in search
+    assert "await warm_stream" not in search
+    assert "play_stream(chat.id, track)" in search
+
+
+def test_early_audio_accepts_yt_dlp_fragment_suffixes():
+    from melody.core.ytdl import _early_audio_path_is_safe
+
+    assert _early_audio_path_is_safe("/tmp/file.webm.part")
+    assert _early_audio_path_is_safe("/tmp/file.webm.part-Frag159")
+    assert _early_audio_path_is_safe("/tmp/file.opus.part_frag_2")
+    assert not _early_audio_path_is_safe("/tmp/file.mp4.part-Frag159")

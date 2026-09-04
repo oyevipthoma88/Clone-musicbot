@@ -81,15 +81,18 @@ async def play_search_cb(client: Client, cb):
     spawn(pre_join(chat.id), name=f"search-prejoin-{chat.id}")
 
     info = await get_video_info(f"https://www.youtube.com/watch?v={video_id}")
-    if not warm_stream.done():
-        # Metadata is normally faster than extraction; do not block the UI on
-        # the warm task, but let an already-finished result settle cleanly.
-        await asyncio.sleep(0)
-    try:
-        await warm_stream
-    except Exception:
-        # play_stream owns the bounded direct/download fallback.
-        pass
+    # The warm resolver is strictly speculative. Never await it here: a
+    # blocked YouTube client must not hold the search-button playback path
+    # hostage. play_stream() has the authoritative direct/download race and
+    # will reuse the resolver result if it wins; consume the task outcome so a
+    # rejected speculative resolve cannot become an unhandled-task warning.
+    def _consume_warm_result(task):
+        try:
+            task.result()
+        except BaseException:
+            pass
+
+    warm_stream.add_done_callback(_consume_warm_result)
     if not info:
         await cb.answer("❌ Could not load song.", show_alert=True)
         return
