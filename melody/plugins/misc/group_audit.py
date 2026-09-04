@@ -1,8 +1,6 @@
 """Detailed group membership and bot/assistant lifecycle audit logging."""
 from __future__ import annotations
 
-from pyrogram import filters
-
 from melody import assistant, bot
 from melody.logging import log_group_event
 from utils.tasks import spawn

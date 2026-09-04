@@ -346,8 +346,6 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
             cached_file_path,
             download_audio,
             is_tg_media_id,
-            on_cloud_host,
-            resolve_stream_urls,
             should_try_direct_stream,
         )
 

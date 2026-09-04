@@ -52,8 +52,6 @@ def test_direct_resolver_rotates_client_profiles_before_giving_up():
 
 
 def test_direct_resolver_keeps_hls_as_a_valid_last_resort():
-    from melody.core import ytdl
-
     source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     assert "direct_profiles = (" in source
     assert '["tv_simply", "tv"]' in source

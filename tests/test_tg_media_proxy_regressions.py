@@ -5,7 +5,6 @@ def test_concurrent_chunk_waiters_receive_shared_bytes(monkeypatch):
     from utils import tg_media_proxy as proxy
 
     async def run():
-        entry = object()
         calls = 0
 
         async def fake_read_chunk_inner(_entry, _index):
