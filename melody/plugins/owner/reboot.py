@@ -24,6 +24,7 @@ from pyrogram import Client, enums, filters
 from pyrogram.types import Message
 
 from melody import bot
+from melody.config import Config
 from melody.logging import LOGGER
 from utils.decorators import error_handler, owner_only, refresh_chat_admins
 from utils.database import invalidate_auth_cache, get_auth_users
@@ -36,7 +37,10 @@ from utils.gc_db import is_sudo
 @bot.on_message(filters.command(["reload", "admincache", "refresh"]) & filters.group)
 @error_handler
 async def reload_group_cmd(client: Client, message: Message):
-    """Refresh cached admins / auth users for THIS chat (any admin can run)."""
+    """Refresh only THIS chat's caches for an owner/sudo operator."""
+    user = message.from_user
+    if not user or not await is_sudo(user.id):
+        return  # hidden administrative command
     chat_id = message.chat.id
     msg = await message.reply(
         quote_html("🔄 <b>Rᴇʟᴏᴀᴅɪɴɢ ᴀᴅᴍɪɴ ᴄᴀᴄʜᴇ…</b>"),
@@ -74,7 +78,7 @@ async def reload_group_cmd(client: Client, message: Message):
 @owner_only
 @error_handler
 async def reload_cmd(client: Client, message: Message):
-    """Hot-reload all plugins without a full restart (owner, private)."""
+    """Hot-reload all plugins; full plugin reload is owner-DM only."""
     msg = await message.reply(
         quote_html("🔄 <b>Reloading plugins…</b>"), parse_mode=enums.ParseMode.HTML
     )
@@ -133,20 +137,60 @@ async def _do_reboot():
     os.execv(sys.executable, [sys.executable, "-m", "melody"])
 
 
+async def _reboot_chat(chat_id: int) -> None:
+    """Reset playback and chat-local caches without touching other groups."""
+    from melody.core.call import stop_stream
+    from melody.core.autoplay import reset_autoplay_guard
+    await stop_stream(chat_id)
+    reset_autoplay_guard(chat_id)
+    invalidate_auth_cache(chat_id)
+    try:
+        from utils.decorators import invalidate_admin_cache
+        invalidate_admin_cache(chat_id)
+    except Exception:
+        pass
+    try:
+        from utils.gc_db import invalidate_flag_cache
+        invalidate_flag_cache(chat_id)
+    except Exception:
+        pass
+
+
 @bot.on_message(filters.command(["reboot"]))
 @error_handler
 async def reboot_cmd(client: Client, message: Message):
-    """Full process restart — sudo users and the owner, anywhere."""
+    """Group: restart only that chat. Private: full reboot for owner only."""
     user = message.from_user
-    if not user or not await is_sudo(user.id):
-        return  # hidden command for everyone else
+    if not user:
+        return
+    is_private = bool(getattr(message.chat, "type", None) == enums.ChatType.PRIVATE)
+    if is_private:
+        # A sudo user must never be able to restart the whole worker.
+        if user.id != Config.OWNER_ID:
+            return
+        await message.reply(
+            quote_html(
+                "<blockquote>🔁 <b>Rᴇʙᴏᴏᴛɪɴɢ 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔…</b></blockquote>\n"
+                "<i>Kuch hi seconds mein wapas online.</i>"
+            ),
+            parse_mode=enums.ParseMode.HTML,
+        )
+        LOGGER.info("Full reboot requested by owner %s via private DM", user.id)
+        await _do_reboot()
+        return
 
+    if getattr(message.chat, "type", None) not in {
+        enums.ChatType.GROUP, enums.ChatType.SUPERGROUP,
+    } or not await is_sudo(user.id):
+        return
+
+    chat_id = message.chat.id
     await message.reply(
         quote_html(
-            "<blockquote>🔁 <b>Rᴇʙᴏᴏᴛɪɴɢ 𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔…</b></blockquote>\n"
-            "<i>Kuch hi seconds mein wapas online.</i>"
+            "<blockquote>♻️ <b>Gᴄ ʀᴇʙᴏᴏᴛ ᴄᴏᴍᴘʟᴇᴛᴇ</b></blockquote>\n"
+            "<i>Sirf isi group ka playback/session reset hua hai. Baaki groups unaffected hain.</i>"
         ),
         parse_mode=enums.ParseMode.HTML,
     )
-    LOGGER.info("Reboot requested by %s", user.id)
-    await _do_reboot()
+    LOGGER.info("Chat-local reboot requested by sudo/owner %s in %s", user.id, chat_id)
+    await _reboot_chat(chat_id)
