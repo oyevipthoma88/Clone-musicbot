@@ -2,6 +2,16 @@
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from melody import bot
+from melody.config import Config
+from utils.decorators import error_handler
+
+# The full profile already provides richer /start and /help handlers from
+# misc.start. Keep this compact module active only for MUSIC_ONLY_MODE, where
+# the misc package is intentionally not loaded; otherwise two handlers answer
+# the same command and users receive duplicate replies.
+_music_only = filters.create(
+    lambda _client, _update: bool(getattr(Config, "MUSIC_ONLY_MODE", False))
+)
 
 
 _START_TEXT = (
@@ -21,11 +31,13 @@ _HELP_TEXT = (
 )
 
 
-@bot.on_message(filters.command("start") & filters.private)
+@bot.on_message(filters.command("start") & filters.private & _music_only)
+@error_handler
 async def start_command(client: Client, message: Message):
     await message.reply(_START_TEXT)
 
 
-@bot.on_message(filters.command("help"))
+@bot.on_message(filters.command("help") & _music_only)
+@error_handler
 async def help_command(client: Client, message: Message):
     await message.reply(_HELP_TEXT)
