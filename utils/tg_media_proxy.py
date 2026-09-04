@@ -206,11 +206,22 @@ async def _read_chunk(entry: _MediaEntry, index: int) -> bytes | None:
     entry.chunk_futures[index] = fut
     try:
         result = await _read_chunk_inner(entry, index)
+        # Share the actual fetched bytes with every concurrent ffmpeg reader.
+        # The previous code always resolved this future with None, so the
+        # second camera/microphone request saw `chunk unavailable` even though
+        # the first reader had successfully fetched and cached the chunk.
+        if not fut.done():
+            fut.set_result(result)
         return result
-    finally:
-        entry.chunk_futures.pop(index, None)
+    except BaseException:
+        # Cancellation/errors must not leave waiters blocked forever. A None
+        # result makes the waiting HTTP request terminate cleanly; the caller
+        # that owns the fetch still receives the original cancellation/error.
         if not fut.done():
             fut.set_result(None)
+        raise
+    finally:
+        entry.chunk_futures.pop(index, None)
 
 
 async def _read_chunk_inner(entry: _MediaEntry, index: int) -> bytes | None:
