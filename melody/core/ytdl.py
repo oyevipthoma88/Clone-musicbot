@@ -2424,12 +2424,12 @@ _DOWNLOAD_LADDER: tuple = (
     {"concurrent_fragment_downloads": 1},                      # flaky CDN / partial fragments
     {"_client": ["android_vr", "web_safari"]},                 # different API surface
     {"_client": ["ios", "mweb"], "concurrent_fragment_downloads": 1},
-    {"_format": "bestaudio/best", "_client": ["tv", "web"]},   # format vanished
+    {"_format": "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/bestaudio/best", "_client": ["tv", "web"]},   # format vanished
     # Last rung — never merge, never post-process. Fixes the recurring
     # "_stream_track failed ... YoutubeDL.post_process → run_all_pps"
     # crash, which is always an ffmpeg merge/convert failure on a DASH
     # video pair, by falling back to a single already-muxed file.
-    {"_format": "bestaudio/best", "_no_merge": True},
+    {"_format": "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/bestaudio/best", "_no_merge": True},
     # ROOT-CAUSE FIX ("ERROR: The downloaded file is empty", repeated for every
     # rung, followed by "_stream_track failed"): YouTube hands SABR-only
     # streaming URLs to the default/web clients. yt-dlp resolves them, starts
@@ -2437,10 +2437,10 @@ _DOWNLOAD_LADDER: tuple = (
     # clients still advertise plain progressive/DASH URLs, and asking for a
     # protocol-restricted (https-only, no SABR/HLS manifest) format keeps the
     # native downloader on a URL that actually returns bytes.
-    {"_client": ["tv_simply", "tv"], "_format": "bestaudio[protocol^=http]/bestaudio/best",
+    {"_client": ["tv_simply", "tv"], "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[protocol^=http]/bestaudio/best",
      "concurrent_fragment_downloads": 1, "_no_merge": True},
     {"_client": ["web_safari", "web_embedded"],
-     "_format": "bestaudio[protocol^=http]/bestaudio/best", "_no_merge": True},
+     "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[protocol^=http]/bestaudio/best", "_no_merge": True},
 )
 
 

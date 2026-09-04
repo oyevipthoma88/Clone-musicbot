@@ -794,29 +794,54 @@ async def _prefetch_upcoming(chat_id: int) -> None:
         async def _warm(upcoming, rank: int) -> None:
             inflight.add(upcoming.video_id)
             try:
-                if should_try_direct_stream():
-                    # Warm URL metadata on every cloud worker. This is cheap
-                    # and makes /skip resolve from memory instead of waiting on
-                    # a fresh YouTube extraction.
-                    try:
-                        await resolve_stream_urls(
-                            upcoming.video_id, want_video=upcoming.video,
-                        )
-                    except Exception:
-                        pass
                 estimate = _prefetch_size_estimate(upcoming)
                 if estimate > _PREFETCH_MAX_BYTES:
+                    # Large items are intentionally metadata-only; attempting
+                    # their full download would starve interactive playback.
+                    if should_try_direct_stream():
+                        try:
+                            await resolve_stream_urls(
+                                upcoming.video_id, want_video=upcoming.video,
+                            )
+                        except Exception:
+                            pass
                     LOGGER.info(
                         "prefetch: metadata-only for %s estimated=%.1fMB limit=100MB",
                         upcoming.video_id, estimate / (1024 * 1024),
                     )
                     return
-                path = await download_audio(
-                    upcoming.video_id,
-                    audio_only=not upcoming.video,
-                    priority=20 + (rank * 15),
-                    owner=chat_id,
+
+                # IMPORTANT: never await URL resolution before starting the
+                # queue download. The old serial order made a queued track wait
+                # behind the 8–20s InnerTube/yt-dlp resolver and only then begin
+                # its full download, so /skip still had to wait from zero. The
+                # download is the useful queue warm-up; direct resolution is a
+                # best-effort parallel optimization and cannot delay it.
+                download_task = asyncio.create_task(
+                    download_audio(
+                        upcoming.video_id,
+                        audio_only=not upcoming.video,
+                        priority=20 + (rank * 15),
+                        owner=chat_id,
+                    )
                 )
+                resolve_task = None
+                if should_try_direct_stream():
+                    resolve_task = asyncio.create_task(
+                        resolve_stream_urls(
+                            upcoming.video_id, want_video=upcoming.video,
+                        )
+                    )
+                try:
+                    path = await download_task
+                finally:
+                    if resolve_task is not None:
+                        if not resolve_task.done():
+                            resolve_task.cancel()
+                        try:
+                            await resolve_task
+                        except BaseException:
+                            pass
                 if path:
                     await _persist_completed_song(path, upcoming)
                     LOGGER.info(

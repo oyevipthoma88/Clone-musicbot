@@ -68,3 +68,12 @@ def test_stream_fallback_keeps_audio_early_handoff_and_bounded_probe():
     assert "_EARLY_AUDIO_HANDOFF_ENABLED" in ytdl_source
     assert "_early_audio_path_is_safe" in ytdl_source
     assert "_download_futures" in ytdl_source
+
+
+def test_queue_prefetch_starts_download_before_optional_direct_resolve():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    download_start = source.index("download_task = asyncio.create_task(")
+    resolver_start = source.index("resolve_task = None", download_start)
+    assert download_start < resolver_start
+    assert "path = await download_task" in source
+    assert "queued track wait" in source
