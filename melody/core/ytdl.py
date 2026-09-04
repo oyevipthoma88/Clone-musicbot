@@ -2276,9 +2276,9 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # before playback could start. 512 KB is still ~30 s of playback buffer (the
 # writer stays far ahead of the 1x-realtime reader, so no premature EOF) but
 # lands on disk in well under a second.
-# 256 KB is a safe audio prefix (~16 seconds at 128 kbps) and reaches
+# 128 KB is a safe audio prefix (~8 seconds at 128 kbps) and reaches
 # PyTgCalls quickly even on a busy 1-CPU dyno.
-_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 256_000)
+_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 128_000)
 # Minimum share of the total file that must be on disk before handing off.
 _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.10)
 # BUG FIX ("3 ghante ki movie download hone tak wait karta hai"): the ratio
@@ -2375,7 +2375,7 @@ def on_cloud_host() -> bool:
     return _ON_CLOUD_HOST
 # Hard ceiling on how long we wait for that early-handoff threshold before
 # giving up and blocking on the full download instead (pure fallback).
-_EARLY_HANDOFF_TIMEOUT = _env_float("EARLY_HANDOFF_TIMEOUT", 4.0)
+_EARLY_HANDOFF_TIMEOUT = _env_float("EARLY_HANDOFF_TIMEOUT", 12.0)
 # SPEED FIX ("gana 20 sec baad bajta hai"): the timeout above used to be a
 # HARD cutoff — miss it by a fraction of a second (very common, because yt-dlp
 # spends the first seconds only resolving metadata, before a single byte is
@@ -2704,6 +2704,11 @@ def _download_audio_sync(video_id: str, audio_only: bool = True,
                     # If symlink creation is unavailable, the real staging path
                     # is still usable until the atomic completion rename.
                     early_holder["early_path"] = fp
+            LOGGER.info(
+                "⚡ #download early audio handoff %s variant=%s bytes=%d path=%s",
+                video_id, tag, downloaded,
+                os.path.basename(early_holder.get("early_path") or fp),
+            )
             early_event.set()
 
     opts = {

@@ -108,3 +108,29 @@ def test_audio_picker_keeps_hls_alternate_for_signed_url_recovery():
     }, False)
     assert result["audio"] == "https://cdn.example/signed.webm"
     assert result["fallback_audio"].endswith("fallback.m3u8")
+
+
+def test_fallback_download_races_without_an_avoidable_cloud_delay():
+    call = ROOT / "melody/core/call.py"
+    source = call.read_text(encoding="utf-8")
+    assert 'float(os.getenv("DOWNLOAD_START_DELAY", "0.0"))' in source
+    assert "_DOWNLOAD_START_DELAY = 0.0" in source
+
+
+def test_audio_early_handoff_is_enabled_with_small_prefix_and_long_metadata_budget():
+    ytdl = ROOT / "melody/core/ytdl.py"
+    source = ytdl.read_text(encoding="utf-8")
+    assert '_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 128_000)' in source
+    assert '_EARLY_HANDOFF_TIMEOUT = _env_float("EARLY_HANDOFF_TIMEOUT", 12.0)' in source
+    assert '"⚡ #download early audio handoff %s variant=%s bytes=%d path=%s"' in source
+    assert '_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag("EARLY_AUDIO_HANDOFF", True)' in source
+    assert '"webm", "ogg", "oga", "opus"' in source
+    assert '"mp3", "flac", "wav"' in source
+
+
+def test_download_audio_requests_early_handoff_for_interactive_audio_fallback():
+    call = ROOT / "melody/core/call.py"
+    source = call.read_text(encoding="utf-8")
+    assert 'allow_early=not video' in source
+    assert 'return_when=asyncio.FIRST_COMPLETED' in source
+    assert 'while pending and stream is None' in source

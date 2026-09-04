@@ -53,21 +53,20 @@ _IS_CLOUD_RUNTIME = bool(
 try:
     _DOWNLOAD_START_DELAY = max(
         0.0,
-        float(os.getenv("DOWNLOAD_START_DELAY", "0.8")),
+        float(os.getenv("DOWNLOAD_START_DELAY", "0.0")),
     )
 except Exception:  # noqa: BLE001
-    _DOWNLOAD_START_DELAY = 0.8
+    _DOWNLOAD_START_DELAY = 0.0
 if _IS_CLOUD_RUNTIME:
-    # Let InnerTube/yt-dlp direct metadata obtain the first network/CPU slice.
-    # The fallback still starts sub-second later and is already progressing if
-    # the CDN cannot be opened, which is faster than launching both heavy jobs
-    # at the exact same instant on a 1-CPU dyno.
+    # Start the fallback immediately as a true race. The download gate gives
+    # the direct resolver priority, while zero delay prevents a failed direct
+    # resolve from adding another avoidable wait before the fallback begins.
     try:
         _DOWNLOAD_START_DELAY = max(
-            0.0, float(os.getenv("DOWNLOAD_START_DELAY", "0.8"))
+            0.0, float(os.getenv("DOWNLOAD_START_DELAY", "0.0"))
         )
     except Exception:  # noqa: BLE001
-        _DOWNLOAD_START_DELAY = 0.8
+        _DOWNLOAD_START_DELAY = 0.0
 
 # Direct YouTube video playback uses two independent ffmpeg processes (camera
 # and microphone). A CDN stall can therefore kill only the audio process while
