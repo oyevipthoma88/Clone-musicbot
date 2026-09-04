@@ -149,3 +149,10 @@ def test_early_audio_accepts_yt_dlp_fragment_suffixes():
     assert _early_audio_path_is_safe("/tmp/file.webm.part-Frag159")
     assert _early_audio_path_is_safe("/tmp/file.opus.part_frag_2")
     assert not _early_audio_path_is_safe("/tmp/file.mp4.part-Frag159")
+
+
+def test_play_and_playforce_activity_log_omits_requester_username():
+    source = (ROOT / "melody/plugins/music/play.py").read_text(encoding="utf-8")
+    assert "• Requested by:" in source
+    assert "requester_name or 'Unknown'" in source
+    assert "user.username" not in source
