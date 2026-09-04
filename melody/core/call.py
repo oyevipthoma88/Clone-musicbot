@@ -1194,6 +1194,8 @@ def _is_probe_error(exc: BaseException) -> bool:
 
 _UNAVAILABLE_MARKERS = (
     "video unavailable",
+    "video is unavailable",
+    "error code 152",
     "removed by the uploader",
     "private video",
     "this video is not available",

@@ -200,6 +200,9 @@ def test_current_youtube_unavailable_wording_stops_retries_and_consumes_future_e
     ytdl = _source("melody/core/ytdl.py")
     assert '"video unavailable"' in ytdl
     assert '"this content isn\'t available"' in ytdl
+    call = _source("melody/core/call.py")
+    assert '"video is unavailable"' in call
+    assert '"error code 152"' in call
     assert "def _consume_download_future" in ytdl
     assert "fut.add_done_callback(_consume_download_future)" in ytdl
 
