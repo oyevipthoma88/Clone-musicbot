@@ -1738,6 +1738,63 @@ _INVIDIOUS_INSTANCES = [
 ]
 
 
+def _resolve_stream_urls_invidious(video_id: str, want_video: bool) -> dict | None:
+    """Resolve direct media URLs through a bounded Invidious instance race.
+
+    YouTube can return zero usable formats to every InnerTube/yt-dlp client
+    from a cloud IP. Invidious exposes the same public video's adaptive/HLS
+    URLs through a different API path. This is a last-resort direct route, not
+    a replacement for the normal resolver, and it is deliberately bounded so a
+    dead public instance never blocks playback indefinitely.
+    """
+    import re
+
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id or ""):
+        return None
+    client = get_http_sync_client()
+    for instance in _INVIDIOUS_INSTANCES[:6]:
+        try:
+            response = client.get(
+                f"{instance}/api/v1/videos/{video_id}",
+                headers={"User-Agent": "Mozilla/5.0 (compatible; ApexVibesBot/1.0)"},
+                timeout=3.0,
+            )
+            if response.status_code != 200:
+                continue
+            data = response.json()
+            formats = []
+            for item in (data.get("adaptiveFormats") or []) + (data.get("formatStreams") or []):
+                url = item.get("url")
+                if not url:
+                    continue
+                mime = str(item.get("type") or item.get("mimeType") or "")
+                is_video = mime.startswith("video/") or bool(item.get("size")) and item.get("height")
+                has_audio = mime.startswith("audio/") or "audio" in mime or "mp4a" in mime or "opus" in mime
+                formats.append({
+                    "url": url,
+                    "protocol": "https",
+                    "vcodec": "avc1" if is_video else "none",
+                    "acodec": "mp4a" if has_audio else "none",
+                    "height": int(item.get("height") or 0),
+                    "abr": float(item.get("bitrate") or item.get("avgBitrate") or 0) / 1000,
+                    "tbr": float(item.get("bitrate") or 0) / 1000,
+                })
+            hls = data.get("hlsUrl") or data.get("hls")
+            if hls:
+                formats.append({"url": hls, "protocol": "m3u8_native", "vcodec": "avc1", "acodec": "mp4a", "height": 480, "abr": 128, "tbr": 500})
+            picked = _pick_stream_formats({"formats": formats, "hlsManifestUrl": hls}, want_video)
+            if picked:
+                picked["headers"] = {}
+                picked["is_live"] = bool(data.get("liveNow"))
+                urls = [url for url in (picked.get("video"), picked.get("audio")) if url]
+                picked["expires_at"] = min(_url_expiry(url) for url in urls)
+                LOGGER.info("✅ Invidious direct stream resolved %s via %s", video_id, instance)
+                return picked
+        except Exception as exc:
+            LOGGER.debug("Invidious direct resolver failed for %s (%s): %s", video_id, instance, type(exc).__name__)
+    return None
+
+
 def _invidious_search_sync(query: str) -> dict | None:
     """Secondary fallback: Invidious public instances."""
     import json, urllib.parse
@@ -4906,8 +4963,27 @@ async def resolve_stream_urls(
                 t.cancel()
 
         if not resolved:
-            _stream_url_failures[key] = _time_mod.monotonic() + _STREAM_URL_FAILURE_TTL
-            raise last_exc or ValueError("no directly streamable http format found")
+            # Last-resort direct route. This is intentionally attempted only
+            # after the normal single-flight InnerTube/yt-dlp race is exhausted;
+            # it prevents a cloud YouTube bot-check from turning every track
+            # into a slow full download while keeping public-instance failures
+            # bounded and isolated.
+            try:
+                resolved = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        YTDL_POOL,
+                        _resolve_stream_urls_invidious,
+                        vid_only,
+                        want_video,
+                    ),
+                    timeout=7.0,
+                )
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                resolved = None
+            if not resolved:
+                _stream_url_failures[key] = _time_mod.monotonic() + _STREAM_URL_FAILURE_TTL
+                raise last_exc or ValueError("no directly streamable http format found")
         _stream_url_failures.pop(key, None)
         _stream_url_cache[key] = resolved
         _prune_stream_url_state()

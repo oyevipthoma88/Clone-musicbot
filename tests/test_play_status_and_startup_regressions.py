@@ -77,3 +77,47 @@ def test_queue_prefetch_starts_download_before_optional_direct_resolve():
     assert download_start < resolver_start
     assert "path = await download_task" in source
     assert "queued track wait" in source
+
+
+def test_invidious_direct_route_is_present_and_bounded():
+    source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
+    assert "def _resolve_stream_urls_invidious" in source
+    assert "_INVIDIOUS_INSTANCES[:6]" in source
+    assert "timeout=7.0" in source
+    assert "adaptiveFormats" in source
+    assert "hlsUrl" in source
+
+
+def test_resolver_attempts_alternate_direct_provider_after_primary_race():
+    source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
+    primary_end = source.index("if not resolved:", source.index("async def resolve_stream_urls"))
+    fallback = source.index("_resolve_stream_urls_invidious", primary_end)
+    assert primary_end < fallback
+    assert "run_in_executor" in source[fallback - 180:fallback + 120]
+
+
+def test_invidious_direct_route_normalizes_adaptive_audio(monkeypatch):
+    from melody.core import ytdl
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {
+                "adaptiveFormats": [{
+                    "url": "https://cdn.example/audio.webm?expire=4102444800",
+                    "type": "audio/webm; codecs=opus",
+                    "bitrate": 96000,
+                }],
+                "formatStreams": [],
+            }
+
+    class Client:
+        def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(ytdl, "get_http_sync_client", lambda: Client())
+    monkeypatch.setattr(ytdl, "_INVIDIOUS_INSTANCES", ["https://example.invalid"])
+    result = ytdl._resolve_stream_urls_invidious("iAIBF2ngbWY", False)
+    assert result["audio"].startswith("https://cdn.example/audio.webm")
+    assert result["video"] is None
