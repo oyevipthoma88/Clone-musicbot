@@ -38,18 +38,13 @@ _assistant_cache: "dict[str, object]" = {}
 async def assistant_identity() -> "tuple[int | None, str | None, str]":
     """Return (id, username, display) of the assistant account.
 
-    Cached forever after the first success — it never changes at runtime.
-    Never raises: on failure the caller just gets (None, None, "assistant").
+    The numeric id is stable, but Telegram usernames/display names are not.
+    Refresh from the loaded ``assistant.me`` object on every call and only use
+    one bounded RPC when the live object is unavailable.
+    Never raises: on failure the caller gets the last known safe identity.
     """
-    if _assistant_cache.get("id"):
-        return (
-            _assistant_cache["id"],           # type: ignore[return-value]
-            _assistant_cache.get("username"),  # type: ignore[return-value]
-            str(_assistant_cache.get("display") or "assistant"),
-        )
     try:
         from melody import assistant
-
         if assistant is None:
             return None, None, "assistant"
         me = getattr(assistant, "me", None)
@@ -60,7 +55,11 @@ async def assistant_identity() -> "tuple[int | None, str | None, str]":
         _assistant_cache.update({"id": me.id, "username": uname, "display": display})
         return me.id, uname, display
     except Exception:  # noqa: BLE001
-        return None, None, "assistant"
+        return (
+            _assistant_cache.get("id"),
+            _assistant_cache.get("username"),
+            str(_assistant_cache.get("display") or "assistant"),
+        )
 
 
 # ── classification ──────────────────────────────────────────────────────────

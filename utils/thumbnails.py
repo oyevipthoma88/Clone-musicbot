@@ -136,21 +136,34 @@ async def get_bot_dp(client) -> "str | None":
         return None
 
 
-# Bot's own username/display-name rarely changes during a run — cache it
-# once and reuse it for the "bot branding" button appended to every play
-# card, instead of hitting get_me() on every /play.
+# Bot identity is cached to avoid a get_me() RPC on every /play, but it is
+# refreshed from the client's already-loaded `me` object when Telegram changes
+# the username or display name during a long-running deployment.
 _bot_identity_cache: dict = {"username": None, "name": None, "tried": False}
 
 
 async def get_bot_identity(client) -> tuple[str | None, str]:
     """Returns (username_without_at, display_name) for the bot account."""
+    live_me = getattr(client, "me", None)
+    if live_me is not None:
+        live_username = getattr(live_me, "username", None)
+        live_name = getattr(live_me, "first_name", None) or "Apex Vibes"
+        if (
+            not _bot_identity_cache["tried"]
+            or live_username != _bot_identity_cache["username"]
+            or live_name != _bot_identity_cache["name"]
+        ):
+            _bot_identity_cache.update(
+                {"username": live_username, "name": live_name, "tried": True}
+            )
+        return _bot_identity_cache["username"], _bot_identity_cache["name"]
     if _bot_identity_cache["tried"]:
         return _bot_identity_cache["username"], _bot_identity_cache["name"]
     _bot_identity_cache["tried"] = True
     try:
         me = await client.get_me()
-        _bot_identity_cache["username"] = me.username
-        _bot_identity_cache["name"] = me.first_name or "Apex Vibes"
+        _bot_identity_cache["username"] = getattr(me, "username", None)
+        _bot_identity_cache["name"] = getattr(me, "first_name", None) or "Apex Vibes"
     except Exception:
         _bot_identity_cache["name"] = "Apex Vibes"
     return _bot_identity_cache["username"], _bot_identity_cache["name"]
