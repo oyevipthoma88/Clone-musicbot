@@ -18,6 +18,7 @@ import asyncio
 import base64
 from contextlib import contextmanager
 import glob
+import hashlib
 import heapq
 import os
 import re
@@ -764,7 +765,17 @@ except ImportError:
     )
 
 
-COOKIES_FILE = "/tmp/melody_yt_cookies.txt"
+# Multiple music bots may run on the same Heroku host during deploy overlap or
+# locally. Keep each bot's normalized cookie master and throwaway copies
+# isolated. Only a short one-way fingerprint is used; the token/cookie content
+# is never logged or used as a filename.
+_cookie_identity = str(getattr(Config, "BOT_TOKEN", "") or os.getenv("BOT_TOKEN", ""))
+_COOKIE_NAMESPACE = (
+    (os.getenv("YT_COOKIE_NAMESPACE") or "").strip()
+    or hashlib.sha256(_cookie_identity.encode("utf-8", "ignore")).hexdigest()[:12]
+    or "default"
+)
+COOKIES_FILE = f"/tmp/melody_yt_cookies_{_COOKIE_NAMESPACE}.txt"
 
 # ── Cloud-host detection ──────────────────────────────────────────────────────
 # Cloud hosts are more likely to have a blocked/throttled googlevideo route,
@@ -873,7 +884,7 @@ def _is_netscape_cookies(text: str) -> bool:
 # hand every yt-dlp run its OWN throwaway copy, so a write-back can never
 # corrupt the master.
 _COOKIE_TEXT: str = ""
-_COOKIE_DIR = "/tmp/melody_cookies"
+_COOKIE_DIR = f"/tmp/melody_cookies_{_COOKIE_NAMESPACE}"
 _COOKIE_LOCK = threading.Lock()
 _COOKIE_TTL_SECONDS = 900
 
@@ -960,7 +971,7 @@ def _write_cookies():
             return
     if raw.startswith("#") or _is_netscape_cookies(raw):
         _store_cookies(raw)
-        LOGGER.info("✅ YT_COOKIES (plain Netscape text) written to %s", COOKIES_FILE)
+        LOGGER.info("✅ YT_COOKIES (plain Netscape text) written to %s (bot-isolated)", COOKIES_FILE)
         return
 
     # ── Path 2: base64-encoded (strict — fail loudly instead of corrupting) ─
