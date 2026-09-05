@@ -41,9 +41,9 @@ from melody.core.pools import YTDL_POOL
 # Keep the budget configurable, but give the authenticated fallback enough time
 # to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "10.0"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "8.0"))
 except ValueError:
-    _RESOLVE_TIMEOUT = 10.0
+    _RESOLVE_TIMEOUT = 8.0
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
 # fallback is started as well (see resolve_stream_urls). The yt-dlp task then
@@ -4933,6 +4933,7 @@ async def resolve_stream_urls(
             tasks.append(it_task)
 
         ydl_task = None
+        invidious_task = None
         if it_task is not None:
             done_fast, _ = await asyncio.wait({it_task}, timeout=_INNERTUBE_HEADSTART)
             if done_fast:
@@ -4946,11 +4947,17 @@ async def resolve_stream_urls(
                     _prune_stream_url_state()
                     LOGGER.info("⚡ #stream innertube head-start resolved %s", video_id)
                     return fast
-        if True:
-            ydl_task = asyncio.ensure_future(
-                loop.run_in_executor(YTDL_POOL, _resolve_stream_urls_sync, target, want_video)
-            )
-            tasks.append(ydl_task)
+        # Independent direct profiles race under one absolute deadline. The
+        # local download fallback is already running in call.py, so no serial
+        # post-deadline source is allowed to extend cold-start latency.
+        ydl_task = asyncio.ensure_future(
+            loop.run_in_executor(YTDL_POOL, _resolve_stream_urls_sync, target, want_video)
+        )
+        tasks.append(ydl_task)
+        invidious_task = asyncio.ensure_future(
+            loop.run_in_executor(YTDL_POOL, _resolve_stream_urls_invidious, vid_only, want_video)
+        )
+        tasks.append(invidious_task)
 
         resolved = None
         last_exc: Exception | None = None
@@ -4990,27 +4997,12 @@ async def resolve_stream_urls(
                 t.cancel()
 
         if not resolved:
-            # Last-resort direct route. This is intentionally attempted only
-            # after the normal single-flight InnerTube/yt-dlp race is exhausted;
-            # it prevents a cloud YouTube bot-check from turning every track
-            # into a slow full download while keeping public-instance failures
-            # bounded and isolated.
-            try:
-                resolved = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        YTDL_POOL,
-                        _resolve_stream_urls_invidious,
-                        vid_only,
-                        want_video,
-                    ),
-                    timeout=7.0,
-                )
-            except Exception as exc:  # noqa: BLE001
-                last_exc = exc
-                resolved = None
-            if not resolved:
-                _stream_url_failures[key] = _time_mod.monotonic() + _STREAM_URL_FAILURE_TTL
-                raise last_exc or ValueError("no directly streamable http format found")
+            # All direct profiles shared the same absolute deadline. Do not
+            # append a serial fallback here: call.py already started the local
+            # audio download in parallel, so waiting again breaks the 5–10s
+            # startup contract.
+            _stream_url_failures[key] = _time_mod.monotonic() + _STREAM_URL_FAILURE_TTL
+            raise last_exc or ValueError("no directly streamable http format found")
         _stream_url_failures.pop(key, None)
         _stream_url_cache[key] = resolved
         _prune_stream_url_state()

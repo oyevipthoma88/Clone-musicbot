@@ -83,17 +83,19 @@ def test_invidious_direct_route_is_present_and_bounded():
     source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     assert "def _resolve_stream_urls_invidious" in source
     assert "_INVIDIOUS_INSTANCES[:6]" in source
-    assert "timeout=7.0" in source
+    assert "invidious_task = asyncio.ensure_future(" in source
+    assert 'os.getenv("RESOLVE_TIMEOUT", "8.0")' in source
     assert "adaptiveFormats" in source
     assert "hlsUrl" in source
 
 
 def test_resolver_attempts_alternate_direct_provider_after_primary_race():
     source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
-    primary_end = source.index("if not resolved:", source.index("async def resolve_stream_urls"))
-    fallback = source.index("_resolve_stream_urls_invidious", primary_end)
-    assert primary_end < fallback
-    assert "run_in_executor" in source[fallback - 180:fallback + 120]
+    race_start = source.index("invidious_task = asyncio.ensure_future(")
+    deadline = source.index("deadline =", race_start)
+    assert race_start < deadline
+    assert "tasks.append(invidious_task)" in source[race_start:deadline]
+    assert "timeout=7.0" not in source
 
 
 def test_invidious_direct_route_normalizes_adaptive_audio(monkeypatch):

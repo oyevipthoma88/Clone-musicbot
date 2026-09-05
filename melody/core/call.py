@@ -84,9 +84,9 @@ _DIRECT_VIDEO_STREAM = os.getenv("DIRECT_VIDEO_STREAM", "false").strip().lower()
 # direct source falls back quickly instead of making /vplay feel stuck.
 # Override with PLAY_PROBE_TIMEOUT when a particular cloud region is slower.
 try:
-    _PLAY_PROBE_TIMEOUT = max(2.0, float(os.getenv("PLAY_PROBE_TIMEOUT", "7")))
+    _PLAY_PROBE_TIMEOUT = max(2.0, float(os.getenv("PLAY_PROBE_TIMEOUT", "5")))
 except Exception:
-    _PLAY_PROBE_TIMEOUT = 7.0
+    _PLAY_PROBE_TIMEOUT = 5.0
 try:
     _LOCAL_PROXY_PLAY_TIMEOUT = max(
         _PLAY_PROBE_TIMEOUT,
@@ -1582,6 +1582,13 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
         return False
 
     try:
+        # Keep the media intent consistent all the way into PyTgCalls.
+        video = bool(video)
+        if not video:
+            try:
+                track.video = False
+            except Exception:
+                pass
         from melody.core.ytdl import download_audio
 
         # SPEED ROOT FIX: direct URL resolution and the local-file fallback
@@ -2820,6 +2827,17 @@ async def play_stream(
     with silence itself before streaming, exactly as before.
     """
     from melody.core.queue import add_to_queue
+
+    # Hard media invariant: callers using the audio API must not inherit a
+    # stale Track.video flag from cache/queue/recovery state. The command
+    # router passes video=False for .play, and this boundary enforces it again
+    # before queueing or constructing MediaStream.
+    video = bool(video)
+    if not video:
+        try:
+            track.video = False
+        except Exception:
+            pass
 
     # A manual request is interactive work: stop unrelated AutoPlay/recovery
     # downloads before it waits for a resolver. Same-video work is excluded so
