@@ -2580,13 +2580,29 @@ _PERMANENT_DOWNLOAD_MARKERS = (
 
 
 def _is_permanent_download_error(exc: BaseException) -> bool:
-    """Return True for content failures that no client/ladders can repair."""
+    """Return True only for content failures no client/rung can repair.
+
+    YouTube reports the mobile-browser restriction as both ``Watch on the
+    YouTube app`` and ``This content isn't available on your mobile browser``.
+    The latter contains the broad ``content isn't available`` marker, but it is
+    *not* a removed/private/geo-blocked video: another yt-dlp client profile can
+    usually serve the same public item. Keep this class retryable so one
+    profile cannot kill playback before the ladder has a chance to rotate.
+    """
     current: BaseException | None = exc
     for _ in range(8):
         if current is None:
             break
         text = str(current).lower()
-        if any(marker in text for marker in _PERMANENT_DOWNLOAD_MARKERS):
+        mobile_restriction = (
+            "watch on the youtube app" in text
+            or "not available on your mobile browser" in text
+            or "isn't available on your mobile browser" in text
+            or "isn’t available on your mobile browser" in text
+        )
+        if not mobile_restriction and any(
+            marker in text for marker in _PERMANENT_DOWNLOAD_MARKERS
+        ):
             return True
         current = current.__cause__ or current.__context__
     return False
