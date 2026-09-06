@@ -1945,9 +1945,12 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                     # playback. download_audio() for a synthetic tg<…> id will
                     # re-fetch the Telegram message and save it to /tmp.
                     try:
-                        fallback_path = await download_audio(
-                            track.video_id, audio_only=not video,
-                            priority=priority, owner=chat_id, allow_early=not video,
+                        fallback_path = await asyncio.wait_for(
+                            download_audio(
+                                track.video_id, audio_only=not video,
+                                priority=priority, owner=chat_id, allow_early=not video,
+                            ),
+                            timeout=max(0.05, _startup_remaining()),
                         )
                         if fallback_path and os.path.exists(fallback_path):
                             filepath = fallback_path
@@ -1961,11 +1964,17 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                                 )
                                 return
                             forget_assistant_peer(chat_id)
-                            await ensure_assistant_peer(chat_id)
+                            await asyncio.wait_for(
+                                ensure_assistant_peer(chat_id),
+                                timeout=max(0.05, _startup_remaining()),
+                            )
                             try:
                                 await asyncio.wait_for(
                                     _pytgcalls.play(chat_id, stream),
-                                    timeout=_LOCAL_PLAY_TIMEOUT,
+                                    timeout=max(
+                                        0.05,
+                                        min(_LOCAL_PLAY_TIMEOUT, _startup_remaining()),
+                                    ),
                                 )
                             except ChatAdminRequired:
                                 _block_vc_admin(chat_id)
@@ -2009,7 +2018,10 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                         )
                         await asyncio.wait_for(
                             _pytgcalls.play(chat_id, alternate),
-                            timeout=_PLAY_PROBE_TIMEOUT,
+                            timeout=max(
+                                0.05,
+                                min(_PLAY_PROBE_TIMEOUT, _startup_remaining()),
+                            ),
                         )
                         LOGGER.info(
                             "Direct CDN alternate HLS route recovered %s in %s",
@@ -2031,8 +2043,11 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                         "Early audio prefix probe failed for %s in %s — waiting for completed file.",
                         track.video_id, chat_id,
                     )
-                    filepath = await wait_for_download(
-                        track.video_id, audio_only=not video,
+                    filepath = await asyncio.wait_for(
+                        wait_for_download(
+                            track.video_id, audio_only=not video,
+                        ),
+                        timeout=max(0.05, _startup_remaining()),
                     )
                     if not filepath:
                         raise RuntimeError("early audio download completed without a file")

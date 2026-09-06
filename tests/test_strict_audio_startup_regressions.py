@@ -34,3 +34,12 @@ def test_video_direct_stream_is_default_for_large_media():
     source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
     assert 'os.getenv("DIRECT_VIDEO_STREAM", "true")' in source
     assert "and (not video or _DIRECT_VIDEO_STREAM)" in source
+
+
+
+def test_proxy_and_alternate_fallbacks_share_the_absolute_startup_deadline():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert "fallback_path = await asyncio.wait_for(" in source
+    assert "wait_for_download(" in source
+    assert "min(_LOCAL_PLAY_TIMEOUT, _startup_remaining())" in source
+    assert "min(_PLAY_PROBE_TIMEOUT, _startup_remaining())" in source
