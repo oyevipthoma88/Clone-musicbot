@@ -1,8 +1,7 @@
 """Apex Vibes music and voice-chat help menu."""
 from pyrogram import Client, filters, enums
-from pyrogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from pyrogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from melody import bot
-from utils.decorators import error_handler
 
 _MUSIC_HELP = (
     "<b>𝑨𝒑𝒆𝒙 𝑽𝒊𝒃𝒆𝒔 .ᐟ.ᐟ Music</b>\n\n"
@@ -27,12 +26,6 @@ def _markup():
         [InlineKeyboardButton("▶️ Play Music", switch_inline_query_current_chat="")],
         [InlineKeyboardButton("🎛 Playback Controls", callback_data="apex_help_controls")],
     ])
-
-
-@bot.on_message(filters.command("help"))
-@error_handler
-async def help_command(client: Client, message: Message):
-    await message.reply(_MUSIC_HELP, parse_mode=enums.ParseMode.HTML, reply_markup=_markup())
 
 
 @bot.on_callback_query(filters.regex(r"^apex_help_controls$"))

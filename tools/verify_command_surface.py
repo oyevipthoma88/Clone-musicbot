@@ -22,6 +22,12 @@ def scope_for(dec: ast.Call) -> str:
         for scope in ("private", "group", "channel", "supergroup"):
             if f"filters.{scope}" in expression:
                 parts.append(scope)
+        # music/start.py is loaded only in MUSIC_ONLY_MODE, where the full
+        # misc start module is intentionally absent. Treat that branch as a
+        # separate scope instead of reporting a false duplicate with the full
+        # profile's /start and /help handlers.
+        if "_music_only" in expression:
+            parts.append("music-only")
     return ",".join(parts) or "any"
 
 
