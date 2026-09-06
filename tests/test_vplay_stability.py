@@ -4,18 +4,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_youtube_vplay_uses_completed_file_by_default():
+def test_youtube_vplay_streams_direct_by_default_for_large_media():
     source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
-    assert 'os.getenv("DIRECT_VIDEO_STREAM", "false")' in source
+    assert 'os.getenv("DIRECT_VIDEO_STREAM", "true")' in source
     assert "and (not video or _DIRECT_VIDEO_STREAM)" in source
-    assert "both\n            # py-tgcalls pipelines then read one immutable local container" in source
+    assert "multi-GB" in source
 
 
 def test_audio_and_live_direct_paths_remain_available():
     source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
     assert "direct_first = live_source or (" in source
     assert "should_try_direct_stream()" in source
-    assert "if not live_source:" in source
+    assert "if not live_source and _video_download_fallback_allowed(track, video):" in source
 
 
 def test_manual_play_entrypoints_reset_speed_at_core_boundary():
@@ -36,6 +36,8 @@ def test_video_download_does_not_use_growing_file_handoff():
     source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
     assert "allow_early=not video" in source
     assert "and (not video or _DIRECT_VIDEO_STREAM)" in source
+    assert "_VIDEO_FALLBACK_MAX_SECONDS" in source
+    assert "large video direct stream unavailable" in source
 
 
 def test_expected_innertube_fallback_noise_is_debug_only():

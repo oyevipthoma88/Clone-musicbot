@@ -81,6 +81,31 @@
       "value": "true",
       "required": false
     },
+    "DIRECT_VIDEO_STREAM": {
+      "description": "Stream YouTube video directly; required for multi-gigabyte movies",
+      "value": "true",
+      "required": false
+    },
+    "VIDEO_FALLBACK_MAX_SECONDS": {
+      "description": "Maximum video duration allowed for full-file fallback; 0 disables it",
+      "value": "1800",
+      "required": false
+    },
+    "EARLY_AUDIO_HANDOFF": {
+      "description": "Unsafe growing-file handoff; keep false on cloud hosts",
+      "value": "false",
+      "required": false
+    },
+    "TG_PROXY_CACHE_MB": {
+      "description": "Global RAM budget for Telegram large-media range proxy cache",
+      "value": "96",
+      "required": false
+    },
+    "TG_PROXY_CONCURRENCY": {
+      "description": "Maximum simultaneous Telegram range-body streams per worker",
+      "value": "4",
+      "required": false
+    },
     "MUSIC_ONLY_MODE": {
       "description": "Load only music handlers to reduce startup/RAM (true/false)",
       "value": "false",
@@ -104,7 +129,7 @@
     "MEM_SOFT_LIMIT_MB": {
       "description": "RSS (MB) above which the memory watchdog trims freed memory back to the OS. Leave empty to auto-derive ~80% of the dyno quota.",
       "required": false,
-      "value": "820"
+      "value": "650"
     }
   },
   "formation": {

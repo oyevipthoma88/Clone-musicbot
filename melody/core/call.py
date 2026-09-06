@@ -71,10 +71,11 @@ if _IS_CLOUD_RUNTIME:
 # Direct YouTube video playback uses two independent ffmpeg processes (camera
 # and microphone). A CDN stall can therefore kill only the audio process while
 # the video process keeps running, which matches the reported "vplay me audio
-# bich me gayab" symptom. Keep direct streaming opt-in for video; audio-only
-# playback remains direct by default, and live HLS sources remain direct because
-# they cannot be downloaded to completion.
-_DIRECT_VIDEO_STREAM = os.getenv("DIRECT_VIDEO_STREAM", "false").strip().lower() in {
+# bich me gayab" symptom. Direct streaming is therefore the production default
+# for video too: a multi-gigabyte movie must never be copied into ephemeral disk
+# before playback. Operators can explicitly disable it for a known-incompatible
+# CDN, but that mode is not suitable for large media.
+_DIRECT_VIDEO_STREAM = os.getenv("DIRECT_VIDEO_STREAM", "true").strip().lower() in {
     "1", "true", "yes", "on"
 }
 
@@ -106,6 +107,35 @@ try:
     )
 except Exception:  # noqa: BLE001
     _CONTROL_RPC_TIMEOUT = 5.0
+
+try:
+    _VIDEO_FALLBACK_MAX_SECONDS = max(
+        0, int(os.getenv("VIDEO_FALLBACK_MAX_SECONDS", "1800"))
+    )
+except Exception:  # noqa: BLE001
+    _VIDEO_FALLBACK_MAX_SECONDS = 1800
+
+
+def _video_download_fallback_allowed(track, video: bool | None = None) -> bool:
+    """Permit local video fallback only for bounded clips.
+
+    A multi-hour/movie-sized video must stay direct-only on a dyno. Unknown
+    duration is also direct-only because it cannot be proven safe; setting the
+    limit to 0 disables every YouTube video download fallback.
+    """
+    try:
+        duration = int(getattr(track, "duration", 0) or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    requested_video = bool(getattr(track, "video", False) if video is None else video)
+    return (
+        not requested_video
+        or (
+            _VIDEO_FALLBACK_MAX_SECONDS > 0
+            and duration > 0
+            and duration <= _VIDEO_FALLBACK_MAX_SECONDS
+        )
+    )
 
 try:  # py-tgcalls raises this when the assistant is not connected to the VC
     from pytgcalls.exceptions import NotInCallError
@@ -1661,10 +1691,10 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 )
                 pending.add(direct_task)
 
-            # For YouTube vplay, the completed-file path is intentional: both
-            # py-tgcalls pipelines then read one immutable local container,
-            # preventing a CDN/audio process from disappearing mid-track. Live
-            # sources still use the direct path above because they never finish.
+            # For YouTube vplay, direct streaming is preferred so multi-GB
+            # movies never wait for or overflow a full local download. Tagged
+            # Telegram media uses the range proxy; live sources also remain
+            # direct because they never finish.
             # SPEED JUGAAD: the full download used to start at the exact same
             # instant as the direct-CDN resolve. On a small dyno that download
             # eats the CPU and the bandwidth the resolve needs, so the "fast"
@@ -1692,7 +1722,11 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                         return None
                     raise
 
-            if not live_source:
+            # For long video, direct CDN/proxy streaming is the only viable
+            # source. Starting a background full-file yt-dlp job here would
+            # consume the worker's disk/network even when direct playback is
+            # the intended path.
+            if not live_source and _video_download_fallback_allowed(track, video):
                 download_task = asyncio.create_task(
                     _delayed_download(_DOWNLOAD_START_DELAY if direct_first else 0.0)
                 )
@@ -1845,6 +1879,11 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                         "— falling back to direct download",
                         track.video_id, chat_id, type(play_exc).__name__,
                     )
+                    if not _video_download_fallback_allowed(track, video):
+                        raise RuntimeError(
+                            "large video direct/proxy stream unavailable; "
+                            "full-file fallback is disabled"
+                        ) from play_exc
                     # The range proxy failed (chunk timeouts on huge files).
                     # Fall back to a direct file download instead of dead-ending
                     # playback. download_audio() for a synthetic tg<…> id will
@@ -1956,6 +1995,11 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                     if download_task is not None and not download_task.done():
                         filepath = await download_task
                     else:
+                        if not _video_download_fallback_allowed(track, video):
+                            raise RuntimeError(
+                                "large video direct stream unavailable; "
+                                "full-file fallback is disabled"
+                            ) from play_exc
                         filepath = await download_audio(
                             track.video_id, audio_only=not video, priority=priority,
                             owner=chat_id, allow_early=not video,
@@ -3364,6 +3408,10 @@ async def seek_stream(chat_id: int, seconds: int) -> int:
     local_path = None
     stream = await _build_direct_stream(chat_id, track, video, seconds)
     if stream is None:
+        if not _video_download_fallback_allowed(track, video):
+            raise RuntimeError(
+                "large video direct stream unavailable; seek cannot use full-file fallback"
+            )
         local_path = await download_audio(track.video_id, audio_only=not video)
         stream = _local_media_stream(chat_id, local_path, video, seconds)
 
@@ -3380,6 +3428,10 @@ async def seek_stream(chat_id: int, seconds: int) -> int:
             "Seek: direct CDN stream unusable for %s in %s (%s) — downloading.",
             track.video_id, chat_id, type(play_exc).__name__,
         )
+        if not _video_download_fallback_allowed(track, video):
+            raise RuntimeError(
+                "large video direct stream unavailable; seek cannot use full-file fallback"
+            ) from play_exc
         local_path = await download_audio(track.video_id, audio_only=not video)
         stream = _local_media_stream(chat_id, local_path, video, seconds)
         await _pytgcalls.play(chat_id, stream)

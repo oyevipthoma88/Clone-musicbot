@@ -30,7 +30,7 @@ def test_direct_and_download_paths_share_one_absolute_deadline():
     assert "return_when=asyncio.FIRST_COMPLETED" in call
 
 
-def test_video_direct_stream_is_opt_in_but_audio_is_direct_by_default():
+def test_video_direct_stream_is_default_for_large_media():
     source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
-    assert 'os.getenv("DIRECT_VIDEO_STREAM", "false")' in source
+    assert 'os.getenv("DIRECT_VIDEO_STREAM", "true")' in source
     assert "and (not video or _DIRECT_VIDEO_STREAM)" in source

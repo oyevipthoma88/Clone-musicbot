@@ -39,6 +39,21 @@
 | `AUTOPLAY` | Enable autoplay by default (default: true) | ❌ |
 | `VIDEO_QUALITY` | `/vplay` output quality: 720p default; 1080p/480p/360p supported | ❌ |
 | `PLAY_PROBE_TIMEOUT` | Seconds allowed for direct stream handoff before fallback (default: 7) | ❌ |
+| `DIRECT_VIDEO_STREAM` | Direct YouTube video streaming; required for multi-gigabyte movies (default: true) | ❌ |
+| `EARLY_AUDIO_HANDOFF` | Growing-file audio handoff; keep false on cloud hosts (default: false on cloud) | ❌ |
+| `TG_PROXY_CACHE_MB` | Global RAM budget for Telegram large-media proxy chunks (default: 96) | ❌ |
+
+### Production capacity policy
+
+The worker is designed to keep playback reliable under bounded concurrency, not
+to promise 100,000 simultaneous voice chats on one process. A single Heroku
+worker has finite CPU, RAM, Telegram RPC throughput, YouTube CDN bandwidth, and
+voice-call session capacity. Use multiple independently sharded bot workers
+and a durable queue/state layer for very large public deployments; do not raise
+the download or proxy limits blindly. `DIRECT_VIDEO_STREAM=true` is mandatory
+for 3GB+/multi-hour YouTube video because the complete file must never be
+downloaded to the dyno filesystem. Tagged Telegram media uses the range proxy
+and reads only requested chunks, with a global RAM cache cap.
 
 ### MongoDB runtime policy
 The live bot uses **only** `MONGO_DB_URI`, which must point to the new MongoDB Atlas cluster. Do not configure any second MongoDB URI in Heroku or in the bot environment. Never commit or paste a MongoDB URI into source control or chat.

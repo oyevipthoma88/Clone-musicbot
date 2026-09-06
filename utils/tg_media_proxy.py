@@ -62,6 +62,10 @@ _MAX_RESUME_ATTEMPTS = _env_int("TG_PROXY_RESUME_ATTEMPTS", 6, 1)
 # How many chunks (1 MiB each) of one file stay in RAM so the audio reader can
 # be served without touching Telegram again.
 _CACHE_CHUNKS = _env_int("TG_PROXY_CACHE_CHUNKS", 48, 4)
+# Per-file cache limits are not enough at scale: 64 active 3GB movies could
+# otherwise retain several gigabytes of chunks in one worker. Keep one global
+# LRU budget shared by all proxy entries; Telegram remains the source of truth.
+_CACHE_MAX_BYTES = _env_int("TG_PROXY_CACHE_MB", 96, 16) * 1024 * 1024
 # Telegram sessions allowed per file. 2 covers "video reader far ahead of the
 # audio reader"; more only invites throttling.
 _SESSIONS_PER_FILE = _env_int("TG_PROXY_FILE_SESSIONS", 2, 1)
@@ -97,6 +101,7 @@ class _MediaEntry:
 
 
 _entries: dict[str, _MediaEntry] = {}
+_cache_bytes = 0
 # Dedup key → token: prevents creating a second proxy for the exact same
 # Telegram message. Keyed on (chat_id, message_id).
 _entry_keys: dict[tuple, str] = {}
@@ -107,14 +112,21 @@ _stream_slots = asyncio.Semaphore(_PROXY_CONCURRENCY)
 
 
 def _prune() -> None:
+    global _cache_bytes
     now = time.monotonic()
     for token, entry in list(_entries.items()):
         if now - entry.touched > _PROXY_TTL:
             _entries.pop(token, None)
+            _cache_bytes -= sum(len(chunk) for chunk in entry.cache.values())
+            entry.cache.clear()
     if len(_entries) > _MAX_PROXIES:
         victims = sorted(_entries, key=lambda token: _entries[token].touched)
         for token in victims[: len(_entries) - _MAX_PROXIES]:
-            _entries.pop(token, None)
+            entry = _entries.pop(token, None)
+            if entry is not None:
+                _cache_bytes -= sum(len(chunk) for chunk in entry.cache.values())
+                entry.cache.clear()
+    _cache_bytes = max(0, _cache_bytes)
     # Clean stale dedup keys
     if _entry_keys:
         valid_tokens = set(_entries)
@@ -164,10 +176,33 @@ async def _close_iterator(iterator: object) -> None:
 
 
 def _cache_put(entry: _MediaEntry, index: int, chunk: bytes) -> None:
+    global _cache_bytes
+    previous = entry.cache.pop(index, None)
+    if previous is not None:
+        _cache_bytes -= len(previous)
     entry.cache[index] = chunk
+    _cache_bytes += len(chunk)
     entry.cache.move_to_end(index)
     while len(entry.cache) > _CACHE_CHUNKS:
-        entry.cache.popitem(last=False)
+        _, evicted = entry.cache.popitem(last=False)
+        _cache_bytes -= len(evicted)
+    # Evict the oldest chunk across all files until the process-wide budget is
+    # respected. This is intentionally best-effort and never blocks playback.
+    while _cache_bytes > _CACHE_MAX_BYTES:
+        victim = None
+        for candidate in _entries.values():
+            if not candidate.cache:
+                continue
+            idx, data = next(iter(candidate.cache.items()))
+            if victim is None or candidate.touched < victim[0].touched:
+                victim = (candidate, idx, data)
+        if victim is None:
+            _cache_bytes = 0
+            break
+        candidate, idx, data = victim
+        candidate.cache.pop(idx, None)
+        _cache_bytes -= len(data)
+    _cache_bytes = max(0, _cache_bytes)
 
 
 def _pick_session(entry: _MediaEntry, index: int) -> _Session:
