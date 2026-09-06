@@ -277,7 +277,8 @@ def test_playback_only_uses_validated_audio_prefix_handoff():
     call = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
     warm = (ROOT / "melody/plugins/music/play.py").read_text(encoding="utf-8")
     assert '_env_flag("EARLY_HANDOFF", False)' in ytdl
-    assert '_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag("EARLY_AUDIO_HANDOFF", True)' in ytdl
+    assert '_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag(' in ytdl
+    assert 'False if _ON_CLOUD_HOST else True' in ytdl
     assert 'if not audio_only or not _early_audio_path_is_safe' in ytdl
     assert 'await done_async.wait()' in ytdl
     assert 'allow_early=not video' in call
@@ -675,7 +676,8 @@ def test_fresh_log_direct_resolver_negative_cache_is_bounded():
 def test_download_first_playback_is_default_with_audio_early_handoff():
     source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     assert 'os.getenv("DIRECT_STREAM", "false")' in source
-    assert '_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag("EARLY_AUDIO_HANDOFF", True)' in source
+    assert '_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag(' in source
+    assert 'False if _ON_CLOUD_HOST else True' in source
     assert 'allow_early=not video' in (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
 
 

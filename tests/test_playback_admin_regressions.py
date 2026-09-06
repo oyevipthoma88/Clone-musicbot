@@ -163,7 +163,8 @@ def test_remote_direct_play_allows_slow_cdn_first_response():
 def test_cloud_playback_uses_audio_only_early_handoff_and_keeps_video_safe():
     source = _source("melody/core/ytdl.py")
     assert '_EARLY_HANDOFF_ENABLED = _env_flag("EARLY_HANDOFF", False) and not _ON_CLOUD_HOST' in source
-    assert '_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag("EARLY_AUDIO_HANDOFF", True)' in source
+    assert '_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag(' in source
+    assert 'False if _ON_CLOUD_HOST else True' in source
     assert 'def _early_handoff_allowed(audio_only: bool)' in source
     assert 'if not audio_only or not _early_audio_path_is_safe' in source
     assert 'await done_async.wait()' in source

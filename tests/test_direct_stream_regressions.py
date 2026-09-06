@@ -121,7 +121,8 @@ def test_audio_early_handoff_is_enabled_with_small_prefix_and_long_metadata_budg
     assert '_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 128_000)' in source
     assert '_EARLY_HANDOFF_TIMEOUT = _env_float("EARLY_HANDOFF_TIMEOUT", 12.0)' in source
     assert '"⚡ #download early audio handoff %s variant=%s bytes=%d path=%s"' in source
-    assert '_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag("EARLY_AUDIO_HANDOFF", True)' in source
+    assert '_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag(' in source
+    assert 'False if _ON_CLOUD_HOST else True' in source
     assert '"webm", "ogg", "oga", "opus"' in source
     assert '"mp3", "flac", "wav"' in source
 
@@ -156,3 +157,17 @@ def test_play_and_playforce_activity_log_omits_requester_username():
     assert "• Requested by:" in source
     assert "requester_name or 'Unknown'" in source
     assert "user.username" not in source
+
+
+def test_cloud_audio_handoff_is_opt_in_to_prevent_growing_file_eof():
+    source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
+    assert 'False if _ON_CLOUD_HOST else True' in source
+    assert "regular file" in source
+
+
+def test_mid_track_stream_end_retries_same_track_before_queue_advance():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert "async def _recover_interrupted_stream" in source
+    assert "if await _recover_interrupted_stream(chat_id):" in source
+    assert "_interrupted_retries" in source
+    assert "start_at=resume_at" in source

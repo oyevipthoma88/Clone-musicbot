@@ -202,6 +202,8 @@ _silence_playing: dict = {}    # chat_id → bool; True while silence stream is 
 _is_video: dict = {}           # chat_id → bool; True if current track is streaming as video
 _play_start_time: dict = {}    # chat_id → float (time.time()) when current track started/last sought
 _seek_offset: dict = {}        # chat_id → int seconds; playback position baked into the last stream swap
+_stream_source: dict = {}      # chat_id → direct/local/early_local, for EOF recovery
+_interrupted_retries: dict = {}  # chat_id:video_id → bounded mid-track retries
 _speed: dict = {}              # chat_id → float playback speed (1.0 = normal)
 _muted: dict = {}              # chat_id → bool; True while the stream is muted
 # 🎧 LISTENER MODE — the assistant is inside the voice chat ONLY to read the
@@ -468,6 +470,12 @@ async def start_call_py():
             # for normal-length tracks; short tracks remain eligible to end
             # naturally, and the existing growing-file resume path still runs.
             if _is_probably_stale_stream_end(chat_id):
+                return
+
+            # A direct CDN/local decoder can end mid-song even when no growing
+            # download exists. Refresh/replay the same track first; advancing
+            # here would silently skip the song and make the VC appear broken.
+            if await _recover_interrupted_stream(chat_id):
                 return
 
             # The song may not really be over: ffmpeg can hit EOF on a file
@@ -2028,8 +2036,13 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
             _active[chat_id] = True
             _listener_mode.pop(chat_id, None)
             _is_video[chat_id] = video
+            _stream_source[chat_id] = (
+                "early_local" if early_file else ("local" if filepath else "direct")
+            )
             _play_start_time[chat_id] = time.time()
             _seek_offset[chat_id] = max(0, int(start_at or 0))
+            for key in [k for k in _interrupted_retries if k.startswith(f"{chat_id}:") and not k.endswith(f":{track.video_id}")]:
+                _interrupted_retries.pop(key, None)
             for k in [k for k in _premature_resumes if k.startswith(f"{chat_id}:") and not k.endswith(f":{track.video_id}")]:
                 _premature_resumes.pop(k, None)
 
@@ -2982,6 +2995,55 @@ def _is_probably_stale_stream_end(chat_id: int) -> bool:
     return False
 
 
+async def _recover_interrupted_stream(chat_id: int) -> bool:
+    """Retry an unexpected mid-track EOF instead of treating it as success.
+
+    Direct googlevideo URLs can expire or briefly stop serving bytes, and a
+    local decoder can also die after a transient disk/network hiccup. The
+    old handler immediately called ``_play_next`` for those events, which is
+    why users saw the bot leave or jump to the next song in the middle. A
+    bounded same-track retry preserves queue order and gives the resolver a
+    chance to obtain a fresh URL. Natural song completion is excluded by the
+    duration margin; unknown/very short tracks keep the existing behavior.
+    """
+    track = get_current(chat_id)
+    if not track or not _active.get(chat_id) or _is_leaving(chat_id):
+        return False
+    try:
+        duration = int(getattr(track, "duration", 0) or 0)
+    except (TypeError, ValueError):
+        duration = 0
+    if duration <= 8:
+        return False
+    position = get_playback_position(chat_id)
+    if position < 2 or position >= duration - 8:
+        return False
+    key = f"{chat_id}:{getattr(track, 'video_id', '')}"
+    attempts = _interrupted_retries.get(key, 0)
+    if attempts >= 2:
+        LOGGER.warning(
+            "#stream giving up mid-track recovery for %s in %s after %d attempts",
+            getattr(track, "video_id", "?"), chat_id, attempts,
+        )
+        return False
+    _interrupted_retries[key] = attempts + 1
+    resume_at = max(0, position - 1)
+    try:
+        LOGGER.warning(
+            "#stream recovered mid-track EOF for %s in %s at %ss (%s, attempt %d)",
+            getattr(track, "video_id", "?"), chat_id, position,
+            _stream_source.get(chat_id, "unknown"), attempts + 1,
+        )
+        started = await _stream_track(
+            chat_id, track, video=bool(_is_video.get(chat_id, False)),
+            start_at=resume_at, gen=_stream_generation.get(chat_id), priority=0,
+        )
+        return started is True
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning("#stream mid-track recovery failed in %s: %s", chat_id, exc)
+        return False
+
+
 def _mark_leaving(chat_id: int) -> None:
     """Suppress the self-inflicted StreamEnded caused by leaving a call."""
     _leaving[chat_id] = time.monotonic() + _LEAVE_GRACE
@@ -3032,11 +3094,14 @@ def _forget_call_state(chat_id: int) -> None:
     _active.pop(chat_id, None)
     _silence_playing.pop(chat_id, None)
     _is_video.pop(chat_id, None)
+    _stream_source.pop(chat_id, None)
     _play_start_time.pop(chat_id, None)
     _seek_offset.pop(chat_id, None)
     _prefetch_inflight.pop(chat_id, None)
     for k in [k for k in _premature_resumes if k.startswith(f"{chat_id}:")]:
         _premature_resumes.pop(k, None)
+    for k in [k for k in _interrupted_retries if k.startswith(f"{chat_id}:")]:
+        _interrupted_retries.pop(k, None)
     _speed.pop(chat_id, None)
     _muted.pop(chat_id, None)
     _listener_mode.pop(chat_id, None)

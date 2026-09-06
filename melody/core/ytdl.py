@@ -2368,10 +2368,20 @@ _EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 4
 # can opt into the validated prefix path below; the shared future and download
 # gate still wait for the complete file before any cache/persistence operation.
 _EARLY_HANDOFF_ENABLED = _env_flag("EARLY_HANDOFF", False) and not _ON_CLOUD_HOST
-# Audio-only WebM/Opus files carry their decode headers at the beginning and
-# can be consumed safely while yt-dlp keeps appending ordered clusters. Enable
-# this path on cloud hosts by default; video/MP4/M4A remain completion-only.
-_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag("EARLY_AUDIO_HANDOFF", True)
+# Audio-only WebM/Opus files carry their decode headers at the beginning, but
+# regular files still expose EOF whenever the downloader loses its lead. Keep
+# this optimization opt-in on cloud hosts; video/MP4/M4A remain completion-only.
+# A regular file has no tail-follow semantics: ffmpeg reaches the current EOF
+# when the downloader briefly loses its lead and PyTgCalls emits StreamEnded.
+# That is exactly the production failure mode seen in Heroku logs (the bot
+# then advances/autoplays or has to seek the same half-written file). Direct
+# CDN playback remains the instant path; when it is unavailable, a completed
+# immutable cache file is safer than pretending a growing file is a stream.
+# Keep the old optimization available as an explicit opt-in for operators who
+# have verified their filesystem/network can keep a large lead.
+_EARLY_AUDIO_HANDOFF_ENABLED = _env_flag(
+    "EARLY_AUDIO_HANDOFF", False if _ON_CLOUD_HOST else True
+)
 _EARLY_AUDIO_STREAMABLE_EXTS = {"webm", "ogg", "oga", "opus", "mp3", "flac", "wav"}
 
 
