@@ -53,3 +53,11 @@ def test_playback_startup_has_one_hard_ten_second_deadline():
     assert "_STARTUP_DEADLINE = 10.0" in source
     assert "playback startup exceeded" in source
     assert "_startup_remaining()" in source
+
+
+
+def test_stream_end_transition_is_deduplicated_per_chat():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert "_stream_end_inflight: set[int]" in source
+    assert "chat_id in _stream_end_inflight" in source
+    assert "_stream_end_inflight.discard(chat_id)" in source

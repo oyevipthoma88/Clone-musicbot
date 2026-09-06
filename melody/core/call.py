@@ -289,6 +289,7 @@ _stream_generation: dict[int, int] = {}    # chat_id → generation that is auth
 _resolving: dict[int, int] = {}            # chat_id → generation currently inside _stream_track
 _resolving_track: dict[int, tuple[str, bool]] = {}  # chat_id → (video_id, video)
 _resolving_origin: dict[int, str] = {}  # chat_id → manual|queue|autoplay
+_stream_end_inflight: set[int] = set()  # one end transition per chat at a time
 
 
 def _cancel_stale_download(chat_id: int, new_video_id: str, new_video: bool) -> None:
@@ -459,6 +460,21 @@ async def start_call_py():
 
     @_pytgcalls.on_update()
     async def _on_stream_end(_, update):
+        # PyTgCalls can emit duplicate/late end notifications during a stream
+        # replacement or leave. Keep the recovery/queue transition one-shot;
+        # the existing generation and leave guards handle the remaining races.
+        if not isinstance(update, StreamEnded):
+            return
+        chat_id = getattr(update, "chat_id", None)
+        if chat_id is None or chat_id in _stream_end_inflight:
+            return
+        _stream_end_inflight.add(chat_id)
+        try:
+            await _handle_stream_end(_, update)
+        finally:
+            _stream_end_inflight.discard(chat_id)
+
+    async def _handle_stream_end(_, update):
         # BUG FIX ("autoplay on hai, gana khatam hua, kuch response nahi
         # aata, jese sab normal ho — silent error"): this handler used to
         # have NO surrounding try/except at all. py-tgcalls dispatches
