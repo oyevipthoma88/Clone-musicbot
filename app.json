@@ -76,6 +76,11 @@
       "value": "7",
       "required": false
     },
+    "PLAY_STARTUP_DEADLINE": {
+      "description": "Hard total playback startup budget in seconds (5-10)",
+      "value": "10",
+      "required": false
+    },
     "DIRECT_STREAM": {
       "description": "Prefer direct CDN streaming; set false to force the download fallback",
       "value": "true",

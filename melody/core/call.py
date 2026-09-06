@@ -89,6 +89,12 @@ try:
 except Exception:
     _PLAY_PROBE_TIMEOUT = 5.0
 try:
+    _STARTUP_DEADLINE = min(
+        10.0, max(5.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "10")))
+    )
+except Exception:  # noqa: BLE001
+    _STARTUP_DEADLINE = 10.0
+try:
     _LOCAL_PROXY_PLAY_TIMEOUT = max(
         _PLAY_PROBE_TIMEOUT,
         float(os.getenv("LOCAL_PROXY_PLAY_TIMEOUT", "15")),
@@ -1592,7 +1598,8 @@ async def warm_assistant_peers(limit: int = 200) -> int:
 
 async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool = False,
                         start_at: int = 0, _dl_retry: bool = False,
-                        gen: "int | None" = None, priority: int = 0):
+                        gen: "int | None" = None, priority: int = 0,
+                        deadline: "float | None" = None):
     """
     Download (or pipe-stream) a track and start/swap into the active VC.
 
@@ -1620,6 +1627,13 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
         return False
 
     try:
+        startup_deadline = deadline or (
+            asyncio.get_running_loop().time() + _STARTUP_DEADLINE
+        )
+
+        def _startup_remaining() -> float:
+            return startup_deadline - asyncio.get_running_loop().time()
+
         # Keep the media intent consistent all the way into PyTgCalls.
         video = bool(video)
         if not video:
@@ -1733,8 +1747,18 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 pending.add(download_task)
         while pending and stream is None:
             done, pending = await asyncio.wait(
-                pending, return_when=asyncio.FIRST_COMPLETED
+                pending,
+                timeout=max(0.05, _startup_remaining()),
+                return_when=asyncio.FIRST_COMPLETED,
             )
+            if not done:
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                        task.add_done_callback(_consume_task_exception)
+                raise TimeoutError(
+                    f"playback startup exceeded {_STARTUP_DEADLINE:.1f}s"
+                )
             for task in done:
                 try:
                     result = task.result()
@@ -1778,14 +1802,19 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
         # raises KeyError('ID not found: …') when it is missing.
         # Always (cheap, cached) — the fallback play() below and a re-join
         # after a dropped call need the peer just as much as the first join.
-        if not await ensure_assistant_peer(chat_id):
+        if not await asyncio.wait_for(
+            ensure_assistant_peer(chat_id), timeout=max(0.05, _startup_remaining())
+        ):
             # Peer could not be resolved from cache/dialogs/invite — the
             # assistant is most likely not a member yet. Join it now BEFORE
             # calling play(), otherwise pytgcalls' create_group_call() blows
             # up with KeyError('ID not found') / CHANNEL_INVALID and we only
             # recover via the slow exception path below.
             LOGGER.debug("peer miss for %s — auto-joining assistant before play()", chat_id)
-            await _auto_join_assistant(chat_id)
+            await asyncio.wait_for(
+                _auto_join_assistant(chat_id),
+                timeout=max(0.05, _startup_remaining()),
+            )
             # ROOT FIX (crash report: "_stream_track failed … ChannelInvalid …
             # KeyError: 'ID not found: -100…'"): the old code called play()
             # even when the peer STILL could not be resolved after the
@@ -1793,7 +1822,10 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
             # and the failure surfaced as a scary #crash log instead of an
             # actionable message. If the assistant cannot address the chat,
             # playback is impossible — say so once, cleanly, and stop.
-            if not await ensure_assistant_peer(chat_id):
+            if not await asyncio.wait_for(
+                ensure_assistant_peer(chat_id),
+                timeout=max(0.05, _startup_remaining()),
+            ):
                 LOGGER.warning(
                     "assistant cannot resolve chat %s — aborting playback before play()",
                     chat_id,
@@ -1847,21 +1879,29 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                     # download plus ffmpeg transcode, i.e. the exact 10-20s wait
                     # users reported. Waiting a few more seconds on the direct
                     # path is always faster than downloading the whole song, so
-                    # give ffprobe a realistic window (tunable via env).
+                    # give ffprobe a realistic window (tunable via env), but
+                    # never beyond the one authoritative startup deadline.
                     await asyncio.wait_for(
                         _pytgcalls.play(chat_id, stream),
-                        timeout=(
-                            _LOCAL_PROXY_PLAY_TIMEOUT
-                            if local_proxy_source else _PLAY_PROBE_TIMEOUT
+                        timeout=max(
+                            0.05,
+                            min(
+                                _LOCAL_PROXY_PLAY_TIMEOUT
+                                if local_proxy_source else _PLAY_PROBE_TIMEOUT,
+                                _startup_remaining(),
+                            ),
                         ),
                     )
                 else:
                     # A local file can still hang inside ffprobe/ffmpeg when
                     # the dyno is overloaded. Bound it so the playback task
-                    # cannot hold a chat’s control path forever.
+                    # cannot hold a chat’s control path forever, and keep it
+                    # inside the same startup deadline.
                     await asyncio.wait_for(
                         _pytgcalls.play(chat_id, stream),
-                        timeout=_LOCAL_PLAY_TIMEOUT,
+                        timeout=max(
+                            0.05, min(_LOCAL_PLAY_TIMEOUT, _startup_remaining())
+                        ),
                     )
             except Exception as play_exc:
                 # See _is_probe_error(): a dead/unreadable CDN URL makes ffprobe
@@ -1993,16 +2033,21 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                     # Reuse the download already racing in the background instead of
                     # starting a second one from scratch.
                     if download_task is not None and not download_task.done():
-                        filepath = await download_task
+                        filepath = await asyncio.wait_for(
+                            download_task, timeout=max(0.05, _startup_remaining())
+                        )
                     else:
                         if not _video_download_fallback_allowed(track, video):
                             raise RuntimeError(
                                 "large video direct stream unavailable; "
                                 "full-file fallback is disabled"
                             ) from play_exc
-                        filepath = await download_audio(
-                            track.video_id, audio_only=not video, priority=priority,
-                            owner=chat_id, allow_early=not video,
+                        filepath = await asyncio.wait_for(
+                            download_audio(
+                                track.video_id, audio_only=not video, priority=priority,
+                                owner=chat_id, allow_early=not video,
+                            ),
+                            timeout=max(0.05, _startup_remaining()),
                         )
                 stream = _local_media_stream(chat_id, filepath, video, start_at)
                 if _is_stale_generation(chat_id, gen):
@@ -2014,11 +2059,16 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 # The direct attempt may have burnt the cached peer (CHANNEL_INVALID
                 # in the log came from THIS second play, not the first): re-prime it.
                 forget_assistant_peer(chat_id)
-                await ensure_assistant_peer(chat_id)
+                await asyncio.wait_for(
+                    ensure_assistant_peer(chat_id),
+                    timeout=max(0.05, _startup_remaining()),
+                )
                 try:
                     await asyncio.wait_for(
                         _pytgcalls.play(chat_id, stream),
-                        timeout=_LOCAL_PLAY_TIMEOUT,
+                        timeout=max(
+                            0.05, min(_LOCAL_PLAY_TIMEOUT, _startup_remaining())
+                        ),
                     )
                 except ChatAdminRequired:
                     # A direct probe can fail first and the fallback play can then
@@ -2811,6 +2861,7 @@ async def leave_listener(chat_id: int) -> None:
 
 async def force_play_stream(
     chat_id: int, track, video: bool = False, prejoin: bool = False,
+    deadline: "float | None" = None,
 ) -> bool:
     """Immediately play ``track`` without racing another state transition."""
     _clear_leaving(chat_id)
@@ -2850,6 +2901,7 @@ async def force_play_stream(
     try:
         result = await _stream_track(
             chat_id, track, video=video, gen=gen, priority=_FORCE_DOWNLOAD_PRIORITY,
+            deadline=deadline,
         )
         return result is True and not is_vc_admin_blocked(chat_id)
     finally:
@@ -2863,6 +2915,7 @@ async def force_play_stream(
 
 async def play_stream(
     chat_id: int, track, video: bool = False, prejoin: bool = True,
+    deadline: "float | None" = None,
 ) -> bool:
     """
     Start or queue a track.
@@ -2996,7 +3049,9 @@ async def play_stream(
     # accepted the audible stream.
     result = False
     try:
-        result = await _stream_track(chat_id, track, video=video, gen=gen, priority=0)
+        result = await _stream_track(
+            chat_id, track, video=video, gen=gen, priority=0, deadline=deadline
+        )
     finally:
         if result is not True and _resolving.get(chat_id) == gen and get_current(chat_id) is track:
             set_current(chat_id, None)

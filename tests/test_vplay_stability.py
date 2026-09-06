@@ -45,3 +45,11 @@ def test_expected_innertube_fallback_noise_is_debug_only():
     assert 'LOGGER.debug("InnerTube search: all client contexts failed' in source
     assert 'LOGGER.debug("InnerTube related: all client contexts failed' in source
     assert 'LOGGER.debug(\n                    "InnerTube %s next HTTP' in source
+
+
+def test_playback_startup_has_one_hard_ten_second_deadline():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert 'os.getenv("PLAY_STARTUP_DEADLINE", "10")' in source
+    assert "_STARTUP_DEADLINE = 10.0" in source
+    assert "playback startup exceeded" in source
+    assert "_startup_remaining()" in source

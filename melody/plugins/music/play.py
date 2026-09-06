@@ -21,6 +21,7 @@ BUG FIX: ENTITY_BOUNDS_INVALID — switched all dynamic-text messages to HTML
    cycles random fire/celebration emojis while the join+search race runs.
 """
 import asyncio
+import os
 import time as _time
 import html
 from pyrogram import Client, filters, enums
@@ -258,6 +259,13 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
     # "gaana 15 sec baad bajta hai" delay actually comes from (search vs.
     # extraction vs. VC join vs. PyTgCalls handoff). One compact log line.
     _t0 = _time.monotonic()
+    try:
+        _startup_budget = min(
+            10.0, max(5.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "10")))
+        )
+    except (TypeError, ValueError):
+        _startup_budget = 10.0
+    _startup_deadline = _t0 + _startup_budget
 
     def _lap() -> float:
         return round(_time.monotonic() - _t0, 2)
@@ -303,7 +311,9 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
         # Telegram UI round-trips are non-audio work and can add seconds on a
         # busy group. Keep the task running, but let search/stream/VC progress
         # as soon as metadata is available.
-        info = await info_task
+        info = await asyncio.wait_for(
+            info_task, timeout=max(0.05, _startup_deadline - _time.monotonic())
+        )
         _t_info = _lap()
 
         if not info:
@@ -459,10 +469,12 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
         if force:
             playing_now = await force_play_stream(
                 chat.id, track, video=video, prejoin=False,
+                deadline=_startup_deadline,
             )
         else:
             playing_now = await play_stream(
                 chat.id, track, video=video, prejoin=False,
+                deadline=_startup_deadline,
             )
         _total_elapsed = _lap()
         _stream_elapsed = max(0.0, _total_elapsed - _t_join) if playing_now else 0.0
