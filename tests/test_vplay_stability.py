@@ -47,10 +47,12 @@ def test_expected_innertube_fallback_noise_is_debug_only():
     assert 'LOGGER.debug(\n                    "InnerTube %s next HTTP' in source
 
 
-def test_playback_startup_has_one_hard_ten_second_deadline():
+def test_playback_startup_has_one_bounded_shared_deadline():
     source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
-    assert 'os.getenv("PLAY_STARTUP_DEADLINE", "10")' in source
-    assert "_STARTUP_DEADLINE = 10.0" in source
+    play_source = (ROOT / "melody/plugins/music/play.py").read_text(encoding="utf-8")
+    assert 'os.getenv("PLAY_STARTUP_DEADLINE", "20")' in source
+    assert 'os.getenv("PLAY_STARTUP_DEADLINE", "20")' in play_source
+    assert "_STARTUP_DEADLINE = 20.0" in source
     assert "playback startup exceeded" in source
     assert "_startup_remaining()" in source
 

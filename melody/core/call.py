@@ -80,20 +80,23 @@ _DIRECT_VIDEO_STREAM = os.getenv("DIRECT_VIDEO_STREAM", "true").strip().lower() 
 }
 
 # How long py-tgcalls gets to open a direct CDN URL before we give up on it.
-# Cloud googlevideo routes can occasionally need several seconds for the
-# first media response. Keep a bounded but shorter default so a dead/blank
-# direct source falls back quickly instead of making /vplay feel stuck.
-# Override with PLAY_PROBE_TIMEOUT when a particular cloud region is slower.
+# Cloud googlevideo routes can occasionally need several seconds for the first
+# media response. Keep the probe itself bounded, but do not let a slow resolver
+# consume the entire request budget and turn a valid track into a false crash.
+# Override with PLAY_PROBE_TIMEOUT / PLAY_STARTUP_DEADLINE for a specific region.
 try:
     _PLAY_PROBE_TIMEOUT = max(2.0, float(os.getenv("PLAY_PROBE_TIMEOUT", "5")))
 except Exception:
     _PLAY_PROBE_TIMEOUT = 5.0
 try:
+    # 10s was too aggressive for cold YouTube CDN routes: the resolver and
+    # ffprobe could both be healthy yet _stream_track raised at line 1775.
+    # Keep this bounded so a dead source still fails predictably.
     _STARTUP_DEADLINE = min(
-        10.0, max(5.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "10")))
+        30.0, max(8.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "20")))
     )
 except Exception:  # noqa: BLE001
-    _STARTUP_DEADLINE = 10.0
+    _STARTUP_DEADLINE = 20.0
 try:
     _LOCAL_PROXY_PLAY_TIMEOUT = max(
         _PLAY_PROBE_TIMEOUT,

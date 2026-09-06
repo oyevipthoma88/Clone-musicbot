@@ -260,11 +260,15 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
     # extraction vs. VC join vs. PyTgCalls handoff). One compact log line.
     _t0 = _time.monotonic()
     try:
+        # Cold YouTube CDN routes can legitimately need more than 10s across
+        # metadata resolution and ffprobe startup. Keep one bounded deadline
+        # shared with call._stream_track so the caller cannot cancel a healthy
+        # playback handoff prematurely.
         _startup_budget = min(
-            10.0, max(5.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "10")))
+            30.0, max(8.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "20")))
         )
     except (TypeError, ValueError):
-        _startup_budget = 10.0
+        _startup_budget = 20.0
     _startup_deadline = _t0 + _startup_budget
 
     def _lap() -> float:

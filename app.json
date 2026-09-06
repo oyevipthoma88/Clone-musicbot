@@ -77,8 +77,8 @@
       "required": false
     },
     "PLAY_STARTUP_DEADLINE": {
-      "description": "Hard total playback startup budget in seconds (5-10)",
-      "value": "10",
+      "description": "Hard total playback startup budget in seconds (8-30)",
+      "value": "20",
       "required": false
     },
     "DIRECT_STREAM": {
