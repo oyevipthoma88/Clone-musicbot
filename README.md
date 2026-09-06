@@ -30,7 +30,7 @@
 </p>
 
 <p align="center">
-  <a href="https://heroku.com/deploy">
+  <a href="https://heroku.com/deploy?template=https://github.com/oyevipthoma88/Clone-musicbot">
     <img src="https://www.herokucdn.com/deploy/button.svg" alt="Deploy Apex Vibes on Heroku" />
   </a>
 </p>
