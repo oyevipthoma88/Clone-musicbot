@@ -12,13 +12,11 @@
 </p>
 
 <p align="center">
-  <img src="https://radare.arzfun.com/api/tg/photo?id=AgACAgUAAxkBAAENDj9qnUDfbZ_m6aDjkEiguXTuwPiLRAACqxNrGzmQ8VS1QvJuguFHewEAAwIAA3kAAz0E" alt="Apex Vibes live music experience" width="520" />
+  <img src="assets/apex-vibes-hero.jpg" alt="Apex Vibes live music experience" width="520" />
 </p>
 
 <p align="center">
-  <a href="https://t.me/">
-    <img src="https://readme-typing-svg.demolab.com?font=Inter&weight=700&size=20&pause=900&color=7C3AED&center=true&vCenter=true&width=620&lines=%E2%9A%A1+Fast+voice-chat+playback;%F0%9F%8E%A7+Direct+CDN+streaming;%F0%9F%8C%8A+Smooth+queue+transitions;%F0%9F%9A%80+Built+for+reliable+24%2F7+music" alt="Apex Vibes live feature animation" />
-  </a>
+  <img src="assets/live-wave.svg" alt="Animated Apex Vibes audio waveform" width="720" />
 </p>
 
 <p align="center">
