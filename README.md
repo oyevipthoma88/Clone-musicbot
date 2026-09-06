@@ -29,13 +29,15 @@
   <i>Search. Tap play. Join the voice chat. Let the music flow.</i>
 </p>
 
----
+<p align="center">
+  <a href="https://heroku.com/deploy">
+    <img src="https://www.herokucdn.com/deploy/button.svg" alt="Deploy Apex Vibes on Heroku" />
+  </a>
+</p>
 
-## 🚀 Deploy on Heroku
-
-[![Deploy](https://www.herokucdn.com/deploy/button.svg)](https://heroku.com/deploy)
-
-> Click the button above → Fill in env vars → Deploy! Bot will start automatically.
+<p align="center">
+  <b>🚀 One-click deploy • Fill environment variables • Start streaming</b>
+</p>
 
 ---
 
