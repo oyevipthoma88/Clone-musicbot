@@ -11,6 +11,26 @@
   <b>Premium Telegram Music Bot • YouTube Streaming • AutoPlay • Lyrics • Colored Mini-App Controls</b>
 </p>
 
+<p align="center">
+  <img src="https://radare.arzfun.com/api/tg/photo?id=AgACAgUAAxkBAAENDj9qnUDfbZ_m6aDjkEiguXTuwPiLRAACqxNrGzmQ8VS1QvJuguFHewEAAwIAA3kAAz0E" alt="Apex Vibes live music experience" width="520" />
+</p>
+
+<p align="center">
+  <a href="https://t.me/">
+    <img src="https://readme-typing-svg.demolab.com?font=Inter&weight=700&size=20&pause=900&color=7C3AED&center=true&vCenter=true&width=620&lines=%E2%9A%A1+Fast+voice-chat+playback;%F0%9F%8E%A7+Direct+CDN+streaming;%F0%9F%8C%8A+Smooth+queue+transitions;%F0%9F%9A%80+Built+for+reliable+24%2F7+music" alt="Apex Vibes live feature animation" />
+  </a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/%E2%9A%A1%20Startup%20target-3%E2%80%937s-7c3aed?style=for-the-badge" alt="Startup target 3 to 7 seconds" />
+  <img src="https://img.shields.io/badge/%F0%9F%9B%A1%20Startup%20budget-5%E2%80%9310s-0ea5e9?style=for-the-badge" alt="Bounded startup budget 5 to 10 seconds" />
+  <img src="https://img.shields.io/badge/%F0%9F%8E%B6%20Mode-Audio%20%7C%20Video-f59e0b?style=for-the-badge" alt="Audio and video playback" />
+</p>
+
+<p align="center">
+  <i>Search. Tap play. Join the voice chat. Let the music flow.</i>
+</p>
+
 ---
 
 ## 🚀 Deploy on Heroku
