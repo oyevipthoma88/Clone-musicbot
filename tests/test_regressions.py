@@ -691,9 +691,9 @@ def test_fresh_log_ytdlp_plugin_loading_is_single_flight():
 def test_cloud_fallback_download_starts_immediately_and_persists_complete_audio():
     call_source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
     cache_source = (ROOT / "utils/song_cache.py").read_text(encoding="utf-8")
-    assert 'float(os.getenv("DOWNLOAD_START_DELAY", "0.0"))' in call_source
+    assert 'float(os.getenv("DOWNLOAD_START_DELAY", "0.25"))' in call_source
     assert 'if _IS_CLOUD_RUNTIME:' in call_source
-    assert '_DOWNLOAD_START_DELAY = 0.0' in call_source
+    assert '_DOWNLOAD_START_DELAY = 0.25' in call_source
     assert "spawn(_persist_completed_song(filepath, track))" in call_source
     assert 'cache_flag = os.getenv("MONGO_AUDIO_CACHE", "true")' in call_source
     assert 'cache_flag = os.getenv("MONGO_GRIDFS_CACHE", "false")' in call_source

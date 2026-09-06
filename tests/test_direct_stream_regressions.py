@@ -111,8 +111,8 @@ def test_audio_picker_keeps_hls_alternate_for_signed_url_recovery():
 def test_fallback_download_races_without_an_avoidable_cloud_delay():
     call = ROOT / "melody/core/call.py"
     source = call.read_text(encoding="utf-8")
-    assert 'float(os.getenv("DOWNLOAD_START_DELAY", "0.0"))' in source
-    assert "_DOWNLOAD_START_DELAY = 0.0" in source
+    assert 'float(os.getenv("DOWNLOAD_START_DELAY", "0.25"))' in source
+    assert "_DOWNLOAD_START_DELAY = 0.25" in source
 
 
 def test_audio_early_handoff_is_enabled_with_small_prefix_and_long_metadata_budget():

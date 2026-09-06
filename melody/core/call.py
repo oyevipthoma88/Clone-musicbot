@@ -41,9 +41,9 @@ from pytgcalls.types import MediaStream, StreamEnded
 from pytgcalls.exceptions import NoActiveGroupCall
 
 
-# The fallback download starts immediately in cloud runtimes so a direct-CDN
-# failure does not add another avoidable second before yt-dlp gets bandwidth.
-# The semaphore in ytdl.py still caps concurrent extractors for Heroku memory.
+# Give the direct CDN resolver a short exclusive head-start before launching
+# the CPU/network-heavy fallback download. This improves cold-start latency on
+# small dynos while keeping the fallback close behind if the CDN is unavailable.
 _IS_CLOUD_RUNTIME = bool(
     os.getenv("DYNO")
     or os.getenv("RAILWAY_ENVIRONMENT")
@@ -53,20 +53,19 @@ _IS_CLOUD_RUNTIME = bool(
 try:
     _DOWNLOAD_START_DELAY = max(
         0.0,
-        float(os.getenv("DOWNLOAD_START_DELAY", "0.0")),
+        float(os.getenv("DOWNLOAD_START_DELAY", "0.25")),
     )
 except Exception:  # noqa: BLE001
-    _DOWNLOAD_START_DELAY = 0.0
+    _DOWNLOAD_START_DELAY = 0.25
 if _IS_CLOUD_RUNTIME:
-    # Start the fallback immediately as a true race. The download gate gives
-    # the direct resolver priority, while zero delay prevents a failed direct
-    # resolve from adding another avoidable wait before the fallback begins.
+    # Keep the race close: the direct resolver gets a short head-start, then
+    # the fallback begins automatically if the CDN route is unavailable.
     try:
         _DOWNLOAD_START_DELAY = max(
-            0.0, float(os.getenv("DOWNLOAD_START_DELAY", "0.0"))
+            0.0, float(os.getenv("DOWNLOAD_START_DELAY", "0.25"))
         )
     except Exception:  # noqa: BLE001
-        _DOWNLOAD_START_DELAY = 0.0
+        _DOWNLOAD_START_DELAY = 0.25
 
 # Direct YouTube video playback uses two independent ffmpeg processes (camera
 # and microphone). A CDN stall can therefore kill only the audio process while
