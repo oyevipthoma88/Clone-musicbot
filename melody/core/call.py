@@ -116,6 +116,19 @@ try:
 except Exception:  # noqa: BLE001
     _CONTROL_RPC_TIMEOUT = 5.0
 
+# A direct CDN can remain stuck until the authoritative startup deadline even
+# though the parallel yt-dlp job is already making progress.  Do not turn that
+# last-resort condition into the reported ``playback startup exceeded 20s``
+# crash: give the existing download a small, separately bounded handoff window
+# and play its local result.  This is not a second download and does not delay
+# healthy direct playback.
+try:
+    _DOWNLOAD_HANDOFF_GRACE = max(
+        2.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "12"))
+    )
+except Exception:
+    _DOWNLOAD_HANDOFF_GRACE = 12.0
+
 try:
     _VIDEO_FALLBACK_MAX_SECONDS = max(
         0, int(os.getenv("VIDEO_FALLBACK_MAX_SECONDS", "1800"))
@@ -1770,6 +1783,40 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if not done:
+                # ROOT FIX for the uploaded timeout: the direct resolver and
+                # the downloader are raced, but the old timeout branch
+                # cancelled BOTH tasks and immediately raised.  A slow/dead
+                # CDN therefore discarded a perfectly useful local fallback
+                # that was already downloading in parallel.  Preserve the
+                # downloader and allow its early-file/full-file handoff a
+                # short independent grace period; only the dead direct task is
+                # cancelled.  This path is reached only after the fast path
+                # has already failed its normal absolute deadline.
+                if download_task is not None:
+                    if direct_task is not None and direct_task in pending:
+                        direct_task.cancel()
+                        direct_task.add_done_callback(_consume_task_exception)
+                        pending.discard(direct_task)
+                    try:
+                        fallback_path = await asyncio.wait_for(
+                            asyncio.shield(download_task),
+                            timeout=_DOWNLOAD_HANDOFF_GRACE,
+                        )
+                    except Exception as fallback_exc:
+                        source_errors.append(fallback_exc)
+                    else:
+                        if fallback_path:
+                            filepath = fallback_path
+                            early_file = bool(filepath.endswith(".early"))
+                            stream = _local_media_stream(
+                                chat_id, filepath, video, start_at
+                            )
+                            LOGGER.info(
+                                "#stream startup deadline recovered via parallel "
+                                "download %s in %s",
+                                track.video_id, chat_id,
+                            )
+                            break
                 for task in pending:
                     if not task.done():
                         task.cancel()

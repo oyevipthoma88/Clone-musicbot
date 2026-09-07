@@ -115,6 +115,13 @@ def test_fallback_download_races_without_an_avoidable_cloud_delay():
     assert "_DOWNLOAD_START_DELAY = 0.25" in source
 
 
+def test_startup_timeout_preserves_parallel_download_fallback():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert 'os.getenv("DOWNLOAD_HANDOFF_GRACE", "12")' in source
+    assert "asyncio.shield(download_task)" in source
+    assert "startup deadline recovered via parallel" in source
+
+
 def test_audio_early_handoff_is_enabled_with_small_prefix_and_long_metadata_budget():
     ytdl = ROOT / "melody/core/ytdl.py"
     source = ytdl.read_text(encoding="utf-8")
