@@ -140,6 +140,8 @@ def test_cloud_audio_fallback_can_start_from_validated_prefix():
     source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
     assert '"EARLY_AUDIO_HANDOFF", True' in source
     assert "_resume_if_premature_end()" in source
+    assert '_EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.02)' in source
+    assert '_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 512_000)' in source
 
 
 def test_failed_direct_url_is_quarantined_for_later_play_requests():
