@@ -2007,6 +2007,19 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 # probe timeout creates a second proxy entry and can race the first
                 # stream. Fail this attempt cleanly instead; the longer local-only
                 # budget above handles normal ffprobe startup latency.
+                if filepath is None and not local_proxy_source:
+                    try:
+                        from melody.core.ytdl import invalidate_stream_url
+                        invalidate_stream_url(track.video_id, want_video=video)
+                        LOGGER.info(
+                            "#stream quarantined unusable direct URL for %s "
+                            "(fallback circuit open)", track.video_id,
+                        )
+                    except Exception as invalidate_exc:  # cache hardening only
+                        LOGGER.debug(
+                            "direct URL quarantine skipped for %s: %s",
+                            track.video_id, invalidate_exc,
+                        )
                 if local_proxy_source:
                     LOGGER.warning(
                         "local Telegram media proxy handoff failed for %s in %s (%s) "

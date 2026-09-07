@@ -142,6 +142,15 @@ def test_cloud_audio_fallback_can_start_from_validated_prefix():
     assert "_resume_if_premature_end()" in source
 
 
+def test_failed_direct_url_is_quarantined_for_later_play_requests():
+    ytdl = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
+    call = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert "def invalidate_stream_url" in ytdl
+    assert "_STREAM_URL_PLAY_FAILURE_TTL = 300.0" in ytdl
+    assert "invalidate_stream_url(track.video_id, want_video=video)" in call
+    assert "fallback circuit open" in call
+
+
 def test_audio_early_handoff_is_enabled_with_small_prefix_and_long_metadata_budget():
     ytdl = ROOT / "melody/core/ytdl.py"
     source = ytdl.read_text(encoding="utf-8")

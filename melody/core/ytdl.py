@@ -4504,6 +4504,10 @@ _stream_url_failures: dict = {}
 # transient, and a 30-second poison window made every concurrent playback
 # caller skip the newly-added client rotation even after the CDN recovered.
 _STREAM_URL_FAILURE_TTL = 8.0
+# A URL that has actually failed inside ffprobe/PyTgCalls is stronger evidence
+# than a resolver returning no formats. Do not keep retrying that same signed
+# URL for the next few minutes while YouTube/cloud POPs continue serving it.
+_STREAM_URL_PLAY_FAILURE_TTL = 300.0
 _STREAM_URL_FALLBACK_TTL = 1800  # used when the URL carries no `expire`
 _STREAM_URL_SAFETY_MARGIN = 300  # re-resolve this long before real expiry
 _STREAM_URL_CACHE_MAX = 128
@@ -4568,6 +4572,20 @@ def drop_caches() -> int:
     except Exception:  # noqa: BLE001
         pass
     return freed
+
+
+def invalidate_stream_url(video_id: str, want_video: bool = False) -> None:
+    """Quarantine a direct URL after ffprobe/PyTgCalls proves it unusable.
+
+    Resolver success is not playback success: signed googlevideo URLs can be
+    accepted by metadata extraction and then return 403/empty data from the
+    worker's CDN POP. Removing the cached URL and short-circuiting the next
+    few attempts prevents the recurring "works once, breaks later" loop while
+    the local download fallback remains authoritative.
+    """
+    key = f"{video_id}:{'v' if want_video else 'a'}"
+    _stream_url_cache.pop(key, None)
+    _stream_url_failures[key] = _time_mod.monotonic() + _STREAM_URL_PLAY_FAILURE_TTL
 
 
 def _url_expiry(url: str) -> float:
