@@ -1338,6 +1338,31 @@ def _is_unavailable_media_error(exc: BaseException) -> bool:
     return False
 
 
+def _is_transient_playback_error(exc: BaseException) -> bool:
+    """True for an exhausted media route rather than a bot-code crash."""
+    if _is_probe_error(exc) or isinstance(
+        exc, (asyncio.TimeoutError, TimeoutError, OSError, ConnectionError)
+    ):
+        return True
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "playback startup exceeded",
+            "timed out",
+            "timeout",
+            "temporarily unavailable",
+            "connection reset",
+            "connection refused",
+            "download failed",
+            "empty file",
+            "empty (",
+            "http error 5",
+            "server returned 5",
+        )
+    )
+
+
 # ─── Assistant peer cache warm-up ────────────────────────────────────────────
 # ROOT-CAUSE FIX (KeyError: 'ID not found: -100…' raised from
 # pyrogram/storage/sqlite_storage.py inside pytgcalls' create_group_call):
@@ -2510,10 +2535,23 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                     return
                 except Exception as retry_exc:  # noqa: BLE001
                     exc = retry_exc
-            await _notify_playback_failed(
-                chat_id,
-                "❌ <b>Gaana play nahi ho paya.</b>\n\nDobara <code>/play</code> try karo.",
-            )
+            if _is_transient_playback_error(exc):
+                # CDN/download routes are interchangeable transport paths, not
+                # application crashes. Keep the owner log quiet and advance a
+                # queued/autoplay track so one bad source cannot stall the VC.
+                LOGGER.info(
+                    "playback routes exhausted for %s in %s (%s); skipping cleanly",
+                    getattr(track, "video_id", "?"), chat_id, type(exc).__name__,
+                )
+                try:
+                    await _play_next(chat_id)
+                except Exception as next_exc:  # noqa: BLE001
+                    LOGGER.debug("queue advance after playback skip failed: %s", next_exc)
+            else:
+                await _notify_playback_failed(
+                    chat_id,
+                    "❌ <b>Gaana play nahi ho paya.</b>\n\nDobara <code>/play</code> try karo.",
+                )
 
         # NOISE FIX: a missing/banned assistant, a stale peer or a chat the
         # assistant simply cannot address is a Telegram permission state, not
@@ -2529,16 +2567,22 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
             )
             return
 
-        await send_error_log(
-            f"_stream_track failed in {chat_id}",
-            exc,
-            context={
-                "chat_id": chat_id,
-                "song_title": track.title if track else None,
-                "video_id": track.video_id if track else None,
-                "uploader": track.uploader if track else None,
-            },
-        )
+        if _is_transient_playback_error(exc):
+            LOGGER.info(
+                "suppressed transient _stream_track failure in %s: %s",
+                chat_id, type(exc).__name__,
+            )
+        else:
+            await send_error_log(
+                f"_stream_track failed in {chat_id}",
+                exc,
+                context={
+                    "chat_id": chat_id,
+                    "song_title": track.title if track else None,
+                    "video_id": track.video_id if track else None,
+                    "uploader": track.uploader if track else None,
+                },
+            )
 
 
 # Cached assistant user id — resolved once via get_me(), reused everywhere

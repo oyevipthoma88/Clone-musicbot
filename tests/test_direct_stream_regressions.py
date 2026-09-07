@@ -122,6 +122,13 @@ def test_startup_timeout_preserves_parallel_download_fallback():
     assert "startup deadline recovered via parallel" in source
 
 
+def test_transient_stream_routes_do_not_emit_crash_cards():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert "def _is_transient_playback_error" in source
+    assert "playback routes exhausted" in source
+    assert "suppressed transient _stream_track failure" in source
+
+
 def test_audio_early_handoff_is_enabled_with_small_prefix_and_long_metadata_budget():
     ytdl = ROOT / "melody/core/ytdl.py"
     source = ytdl.read_text(encoding="utf-8")
