@@ -136,6 +136,12 @@ def test_active_download_suppresses_duplicate_forced_direct_resolve():
     assert "no duplicate resolve" in source
 
 
+def test_cloud_audio_fallback_can_start_from_validated_prefix():
+    source = (ROOT / "melody/core/ytdl.py").read_text(encoding="utf-8")
+    assert '"EARLY_AUDIO_HANDOFF", True' in source
+    assert "_resume_if_premature_end()" in source
+
+
 def test_audio_early_handoff_is_enabled_with_small_prefix_and_long_metadata_budget():
     ytdl = ROOT / "melody/core/ytdl.py"
     source = ytdl.read_text(encoding="utf-8")
