@@ -1096,10 +1096,14 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
                 # a fresh resolve for a non-cached error (for example an expired
                 # signed URL); known-unavailable sources should yield immediately.
                 cached_failure = "cached failure" in str(cached_exc).lower()
-                if cached_failure:
+                from melody.core.ytdl import is_download_inflight
+                download_already_running = is_download_inflight(
+                    track.video_id, audio_only=not video,
+                )
+                if cached_failure or download_already_running:
                     LOGGER.info(
-                        "#stream direct source negative-cached for %s — using download fallback",
-                        track.video_id,
+                        "#stream direct source negative-cached/unavailable for %s — using existing "
+                        "download fallback (no duplicate resolve)", track.video_id,
                     )
                     return None
                 LOGGER.debug(

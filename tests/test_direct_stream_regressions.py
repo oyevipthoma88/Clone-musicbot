@@ -129,6 +129,13 @@ def test_transient_stream_routes_do_not_emit_crash_cards():
     assert "suppressed transient _stream_track failure" in source
 
 
+def test_active_download_suppresses_duplicate_forced_direct_resolve():
+    source = (ROOT / "melody/core/call.py").read_text(encoding="utf-8")
+    assert "is_download_inflight" in source
+    assert "download_already_running" in source
+    assert "no duplicate resolve" in source
+
+
 def test_audio_early_handoff_is_enabled_with_small_prefix_and_long_metadata_budget():
     ytdl = ROOT / "melody/core/ytdl.py"
     source = ytdl.read_text(encoding="utf-8")
