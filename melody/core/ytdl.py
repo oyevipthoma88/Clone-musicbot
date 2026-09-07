@@ -44,6 +44,10 @@ try:
     _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "8.0"))
 except ValueError:
     _RESOLVE_TIMEOUT = 8.0
+# Keep the existing operator override, but prevent a cold direct resolver from
+# consuming the whole playback latency budget before the parallel fallback wins.
+_DIRECT_RESOLVE_MAX = max(1.5, float(os.getenv("DIRECT_RESOLVE_MAX", "3.0")))
+_RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
 # fallback is started as well (see resolve_stream_urls). The yt-dlp task then
