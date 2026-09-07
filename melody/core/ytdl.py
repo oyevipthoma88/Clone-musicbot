@@ -2333,12 +2333,12 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # file put the whole download on the critical path — on a Heroku dyno a
 # 4-5 minute track is 4-6 MB and, together with the metadata resolve, that
 # is exactly the 15-20s users reported. Playback now starts from a
-# still-growing file again, but with a much larger and *ratio-aware*
-# buffer than the old 768 KB attempt (that is what made it die at EOF and
-# spam AutoPlay). See _hook() below: handoff needs a hard byte floor AND a
-# healthy share of the total file, so the writer stays far ahead of the
-# 1x-realtime reader. call.py's _resume_if_premature_end() remains the
-# safety net if the reader ever does catch up.
+# still-growing file again, but with a bounded prefix buffer rather than
+# waiting for most of the file. The old ratio/60%-of-small-file rule made a
+# direct-stream failure fall back to an almost-complete download, which is the
+# 15-20s startup delay visible in production. The prefix is only enabled for
+# probe-safe audio containers and call.py retains the premature-EOF recovery
+# safety net if a slow source catches the reader up.
 # SPEED FIX ("5 sec ke andar gana bajna chahiye"): 1.2 MB is ~75 seconds of
 # 128 kbps audio — on a Heroku dyno that alone was 5-10 s of pure waiting
 # before playback could start. 512 KB is still ~30 s of playback buffer (the
@@ -2388,6 +2388,28 @@ _EARLY_AUDIO_STREAMABLE_EXTS = {"webm", "ogg", "oga", "opus", "mp3", "flac", "wa
 
 def _early_handoff_allowed(audio_only: bool) -> bool:
     return bool(_EARLY_HANDOFF_ENABLED or (audio_only and _EARLY_AUDIO_HANDOFF_ENABLED))
+
+
+def _early_handoff_ready(downloaded: int, total: int = 0) -> bool:
+    """Return whether a growing audio file has enough safe prefix to play.
+
+    For small files, requiring both a byte floor and 60% of the total made
+    fallback playback wait until nearly complete. Use a bounded prefix instead;
+    tiny files still require a meaningful 32 KiB minimum, while large files use
+    the dedicated fixed prefix below.
+    """
+    downloaded = max(0, int(downloaded or 0))
+    total = max(0, int(total or 0))
+    if total >= _EARLY_HANDOFF_LARGE_FILE_BYTES:
+        required = _EARLY_HANDOFF_LARGE_FILE_PREFIX
+    elif total:
+        required = min(
+            _EARLY_HANDOFF_BYTES,
+            max(32_000, int(total * _EARLY_HANDOFF_RATIO)),
+        )
+    else:
+        required = _EARLY_HANDOFF_BYTES
+    return downloaded >= required
 
 
 def _early_audio_path_is_safe(path: str) -> bool:
@@ -2777,21 +2799,7 @@ def _download_audio_sync(video_id: str, audio_only: bool = True,
             return
         downloaded = d.get("downloaded_bytes") or 0
         total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-        ready = downloaded >= _EARLY_HANDOFF_BYTES
-        if total:
-            if total >= _EARLY_HANDOFF_LARGE_FILE_BYTES:
-                # Long/huge media (e.g. a 3-hour movie): a ratio of the total
-                # would mean buffering hundreds of MB to GBs first. Hand off
-                # after the small fixed prefix instead so playback starts
-                # almost immediately and the rest streams in the background.
-                ready = downloaded >= _EARLY_HANDOFF_LARGE_FILE_PREFIX
-            else:
-                # Small file? A byte floor alone would never trigger; a ratio
-                # alone would hand off too early on a big one. Require both:
-                # enough absolute buffer OR enough of the whole file.
-                ready = (downloaded >= total * _EARLY_HANDOFF_RATIO) and (
-                    ready or downloaded >= total * 0.6
-                )
+        ready = _early_handoff_ready(downloaded, total)
         if fp and ready and os.path.exists(fp):
             if early_holder is not None:
                 stable = f"/tmp/melody_{video_id}_{tag}.early"

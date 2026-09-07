@@ -190,6 +190,22 @@ def test_early_audio_accepts_yt_dlp_fragment_suffixes():
     assert not _early_audio_path_is_safe("/tmp/file.mp4.part-Frag159")
 
 
+def test_early_audio_handoff_does_not_wait_for_most_of_small_file():
+    from melody.core.ytdl import _early_handoff_ready
+
+    # A 4 MB song should be playable after the bounded prefix, not after the
+    # old 60%-download gate that made direct-stream failures take 15-20s.
+    assert _early_handoff_ready(128_000, 4_000_000)
+    assert not _early_handoff_ready(32_000, 4_000_000)
+
+
+def test_early_audio_handoff_uses_fixed_prefix_for_large_files():
+    from melody.core.ytdl import _early_handoff_ready
+
+    assert not _early_handoff_ready(400_000, 50_000_000)
+    assert _early_handoff_ready(512_000, 50_000_000)
+
+
 def test_play_and_playforce_activity_log_omits_requester_username():
     source = (ROOT / "melody/plugins/music/play.py").read_text(encoding="utf-8")
     assert "• Requested by:" in source
