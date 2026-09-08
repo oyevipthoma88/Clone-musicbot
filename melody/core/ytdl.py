@@ -4682,7 +4682,13 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
         if dash_audio:
             formats = list(formats) + dash_audio
 
-    audio_only_fmts = [f for f in formats if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")]
+    # ⚡ SPEED FIX: Include DASH audio formats in audio_only_fmts
+    # DASH audio-only streams are perfectly valid for audio playback and should
+    # not be filtered out just because they use the "dash" protocol
+    audio_only_fmts = [
+        f for f in formats 
+        if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")
+    ]
     video_only_fmts = [f for f in formats if f.get("vcodec") not in (None, "none") and f.get("acodec") in (None, "none")]
     muxed_fmts = [f for f in formats if f.get("vcodec") not in (None, "none") and f.get("acodec") not in (None, "none")]
 
