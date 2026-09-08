@@ -4851,8 +4851,6 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
 
 
 def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
-    if os.getenv('DISABLE_DIRECT_STREAM', '1') == '1':
-        return {}
     base_opts = {
         **_ydl_opts(audio_only=not want_video),
         "extract_flat": False,
