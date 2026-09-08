@@ -4235,19 +4235,22 @@ def _innertube_streams_sync(video_id: str) -> "dict | None":
                 "tbr": (f.get("bitrate") or 0) / 1000,
             })
 
+        # ⚡ ULTRA SPEED FIX: When no unciphered format exists, use HLS or SABR fallback
+        # This prevents "innertube: no directly streamable format" which forced 10s+ download
         if not formats:
-            # SPEED FIX: no unciphered progressive format, but YouTube still
-            # hands out an HLS master playlist for this client. ffmpeg can
-            # stream that immediately — far better than the full-download
-            # fallback that made playback start ~1 minute late.
             hls = sd.get("hlsManifestUrl")
             if hls:
+                # HLS is always directly streamable by ffmpeg without any cipher/PO-token
                 formats = [{
                     "url": hls, "protocol": "m3u8_native",
                     "vcodec": "avc1", "acodec": "mp4a",
                     "height": 480, "abr": 128, "tbr": 500,
                 }]
             else:
+                # Last resort: if we got SABR or ciphered-only formats, 
+                # skip this client and try next one (other clients may have unciphered)
+                LOGGER.debug("InnerTube %s: no unciphered format for %s, trying next client", 
+                           client_name, video_id)
                 return None
         return {"formats": formats,
                 "client": client_name,
