@@ -124,10 +124,10 @@ except Exception:  # noqa: BLE001
 # healthy direct playback.
 try:
     _DOWNLOAD_HANDOFF_GRACE = max(
-        2.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "12"))
+        2.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "90"))
     )
 except Exception:
-    _DOWNLOAD_HANDOFF_GRACE = 12.0
+    _DOWNLOAD_HANDOFF_GRACE = 90.0
 
 try:
     _VIDEO_FALLBACK_MAX_SECONDS = max(
