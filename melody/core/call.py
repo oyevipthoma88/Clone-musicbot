@@ -53,19 +53,19 @@ _IS_CLOUD_RUNTIME = bool(
 try:
     _DOWNLOAD_START_DELAY = max(
         0.0,
-        float(os.getenv("DOWNLOAD_START_DELAY", "0.25")),
+        float(os.getenv("DOWNLOAD_START_DELAY", "0.0")),
     )
 except Exception:  # noqa: BLE001
-    _DOWNLOAD_START_DELAY = 0.25
+    _DOWNLOAD_START_DELAY = 0.0
 if _IS_CLOUD_RUNTIME:
     # Keep the race close: the direct resolver gets a short head-start, then
     # the fallback begins automatically if the CDN route is unavailable.
     try:
         _DOWNLOAD_START_DELAY = max(
-            0.0, float(os.getenv("DOWNLOAD_START_DELAY", "0.25"))
+            0.0, float(os.getenv("DOWNLOAD_START_DELAY", "0.0"))
         )
     except Exception:  # noqa: BLE001
-        _DOWNLOAD_START_DELAY = 0.25
+        _DOWNLOAD_START_DELAY = 0.0
 
 # Direct YouTube video playback uses two independent ffmpeg processes (camera
 # and microphone). A CDN stall can therefore kill only the audio process while
@@ -84,18 +84,18 @@ _DIRECT_VIDEO_STREAM = os.getenv("DIRECT_VIDEO_STREAM", "true").strip().lower() 
 # consume the entire request budget and turn a valid track into a false crash.
 # Override with PLAY_PROBE_TIMEOUT / PLAY_STARTUP_DEADLINE for a specific region.
 try:
-    _PLAY_PROBE_TIMEOUT = max(2.0, float(os.getenv("PLAY_PROBE_TIMEOUT", "5")))
+    _PLAY_PROBE_TIMEOUT = max(0.8, float(os.getenv("PLAY_PROBE_TIMEOUT", "2.5")))
 except Exception:
-    _PLAY_PROBE_TIMEOUT = 5.0
+    _PLAY_PROBE_TIMEOUT = 2.5
 try:
     # 10s was too aggressive for cold YouTube CDN routes: the resolver and
     # ffprobe could both be healthy yet _stream_track raised at line 1775.
     # Keep this bounded so a dead source still fails predictably.
     _STARTUP_DEADLINE = min(
-        30.0, max(8.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "20")))
+        10.0, max(4.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "8.5")))
     )
 except Exception:  # noqa: BLE001
-    _STARTUP_DEADLINE = 20.0
+    _STARTUP_DEADLINE = 8.5
 try:
     _LOCAL_PROXY_PLAY_TIMEOUT = max(
         _PLAY_PROBE_TIMEOUT,
@@ -105,10 +105,10 @@ except Exception:  # noqa: BLE001
     _LOCAL_PROXY_PLAY_TIMEOUT = max(_PLAY_PROBE_TIMEOUT, 15.0)
 try:
     _LOCAL_PLAY_TIMEOUT = max(
-        8.0, float(os.getenv("LOCAL_PLAY_TIMEOUT", "18"))
+        5.0, float(os.getenv("LOCAL_PLAY_TIMEOUT", "9"))
     )
 except Exception:  # noqa: BLE001
-    _LOCAL_PLAY_TIMEOUT = 18.0
+    _LOCAL_PLAY_TIMEOUT = 9.0
 try:
     _CONTROL_RPC_TIMEOUT = max(
         2.0, float(os.getenv("CONTROL_RPC_TIMEOUT", "5"))
@@ -124,10 +124,10 @@ except Exception:  # noqa: BLE001
 # healthy direct playback.
 try:
     _DOWNLOAD_HANDOFF_GRACE = max(
-        2.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "90"))
+        1.0, min(8.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "4")))
     )
 except Exception:
-    _DOWNLOAD_HANDOFF_GRACE = 90.0
+    _DOWNLOAD_HANDOFF_GRACE = 4.0
 
 try:
     _VIDEO_FALLBACK_MAX_SECONDS = max(
@@ -1043,7 +1043,8 @@ def _is_local_media_proxy(path: str | None) -> bool:
     )
 
 
-async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 0):
+async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 0,
+                               force: bool = False):
     """Build a MediaStream that plays straight off the CDN — nothing downloaded.
 
     ROOT-CAUSE FIX ("/vplay me audio aur video miss match ho rahi hai" +
