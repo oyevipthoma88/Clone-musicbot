@@ -26,6 +26,7 @@ from typing import Dict, Iterable, Optional
 
 import logging
 import time
+import asyncio
 
 from pyrogram import raw
 
@@ -59,11 +60,12 @@ RESOLUTION_SUPPORTED = True
 # off briefly and fail open while playback continues normally.
 _RESOLUTION_RETRY_AT = 0.0
 _RESOLUTION_RETRY_COOLDOWN = 60.0
+_RESOLUTION_LOCK = asyncio.Lock()
 
 _UNSUPPORTED_MARKERS = ("BOT_METHOD_INVALID", "METHOD_INVALID", "USER_BOT_INVALID")
 
 
-async def resolve_custom_emoji(client, ids: Iterable[int]) -> Dict[int, Optional[str]]:
+async def _resolve_custom_emoji_unlocked(client, ids: Iterable[int]) -> Dict[int, Optional[str]]:
     """Return ``{custom_emoji_id: alt_glyph_or_None}`` for every id that
     Telegram can actually resolve right now. Unresolvable ids are simply
     absent from the mapping. Never raises — failures are logged and yield an
@@ -128,3 +130,16 @@ async def resolve_custom_emoji(client, ids: Iterable[int]) -> Dict[int, Optional
         )
 
     return resolved
+
+
+async def resolve_custom_emoji(client, ids: Iterable[int]) -> Dict[int, Optional[str]]:
+    """Resolve one batch at a time across all concurrent message sends.
+
+    During a Telegram RPC outage many cards can enter verification together.
+    Without a process-wide lock every caller starts its own ten-attempt
+    Pyrogram retry sequence before the cooldown becomes visible to the others,
+    producing a large retry storm and wasting the event loop on presentation
+    work that is explicitly best-effort.
+    """
+    async with _RESOLUTION_LOCK:
+        return await _resolve_custom_emoji_unlocked(client, ids)
