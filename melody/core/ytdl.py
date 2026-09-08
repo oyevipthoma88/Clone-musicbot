@@ -41,12 +41,12 @@ from melody.core.pools import YTDL_POOL
 # Keep the budget configurable, but give the authenticated fallback enough time
 # to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "4.5"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "5"))
 except ValueError:
     _RESOLVE_TIMEOUT = 4.5
 # Keep the existing operator override, but prevent a cold direct resolver from
 # consuming the whole playback latency budget before the parallel fallback wins.
-_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "4.5")))
+_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "5")))
 _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
@@ -1048,6 +1048,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     • concurrent_fragment_downloads=4 (SPEED FIX — see below).
     """
     fmt = (
+        "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
         f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 96)}]/"
         "bestaudio[ext=webm]/"
         "bestaudio[ext=opus]/bestaudio[abr<=128]/"
@@ -2469,7 +2470,7 @@ def on_cloud_host() -> bool:
     return _ON_CLOUD_HOST
 # Hard ceiling on how long we wait for that early-handoff threshold before
 # giving up and blocking on the full download instead (pure fallback).
-_EARLY_HANDOFF_TIMEOUT = _env_float("EARLY_HANDOFF_TIMEOUT", 12.0)
+_EARLY_HANDOFF_TIMEOUT = _env_float("EARLY_HANDOFF_TIMEOUT", 6.0)
 # SPEED FIX ("gana 20 sec baad bajta hai"): the timeout above used to be a
 # HARD cutoff — miss it by a fraction of a second (very common, because yt-dlp
 # spends the first seconds only resolving metadata, before a single byte is
