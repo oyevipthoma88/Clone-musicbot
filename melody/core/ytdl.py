@@ -41,12 +41,12 @@ from melody.core.pools import YTDL_POOL
 # Keep the budget configurable, but give the authenticated fallback enough time
 # to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "4.5"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "2.5"))
 except ValueError:
     _RESOLVE_TIMEOUT = 4.5
 # Keep the existing operator override, but prevent a cold direct resolver from
 # consuming the whole playback latency budget before the parallel fallback wins.
-_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "4.5")))
+_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "2.5")))
 _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
@@ -1059,7 +1059,9 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # (falling back to whatever's available if nothing matches) cuts
         # download size — and therefore wait time — substantially without
         # a noticeable quality drop.
-        f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 96)}]/"
+        f# ⚡ SPEED FIX: HLS/m3u8 ko priority do (logs me HLS wale 4s me bajte hain)
+        "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
+        "bestaudio[ext=webm][abr<=96]/"
         "bestaudio[ext=webm]/"
         "bestaudio[ext=opus]/bestaudio[abr<=128]/"
         "bestaudio[ext=ogg]/bestaudio[abr<=128]/best"
@@ -2352,7 +2354,7 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # lands on disk in well under a second.
 # 128 KB is a safe audio prefix (~8 seconds at 128 kbps) and reaches
 # PyTgCalls quickly even on a busy 1-CPU dyno.
-_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 64_000)
+_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 32_000)
 # Minimum share of the total file that must be on disk before handing off.
 _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.01)
 # BUG FIX ("3 ghante ki movie download hone tak wait karta hai"): the ratio
@@ -2364,7 +2366,7 @@ _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.01)
 # far faster than 1x realtime playback, so that prefix keeps growing well
 # ahead of the reader for the rest of a multi-hour file.
 _EARLY_HANDOFF_LARGE_FILE_BYTES = _env_int("EARLY_HANDOFF_LARGE_FILE_BYTES", 10_000_000)
-_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 64_000)  # ⚡ SPEED: 128KB→64KB
+_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 32_000)  # ⚡ SPEED: 128KB→64KB
 # ROOT-CAUSE FIX from the Aug 25 Heroku log:
 #   ffprobe check_stream failed (NoAudioSourceFound: No audio source found on
 #   "/tmp/melody_<id>_a.mp4.part")
