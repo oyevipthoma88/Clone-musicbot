@@ -4515,11 +4515,11 @@ _stream_url_failures: dict = {}
 # Keep negative caching short: a YouTube client/PO-token outage is often
 # transient, and a 30-second poison window made every concurrent playback
 # caller skip the newly-added client rotation even after the CDN recovered.
-_STREAM_URL_FAILURE_TTL = 8.0
+_STREAM_URL_FAILURE_TTL = 3.0
 # A URL that has actually failed inside ffprobe/PyTgCalls is stronger evidence
 # than a resolver returning no formats. Do not keep retrying that same signed
 # URL for the next few minutes while YouTube/cloud POPs continue serving it.
-_STREAM_URL_PLAY_FAILURE_TTL = 300.0
+_STREAM_URL_PLAY_FAILURE_TTL = 60.0
 _STREAM_URL_FALLBACK_TTL = 1800  # used when the URL carries no `expire`
 _STREAM_URL_SAFETY_MARGIN = 300  # re-resolve this long before real expiry
 _STREAM_URL_CACHE_MAX = 128
