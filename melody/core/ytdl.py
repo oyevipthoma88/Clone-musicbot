@@ -1048,18 +1048,6 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     • concurrent_fragment_downloads=4 (SPEED FIX — see below).
     """
     fmt = (
-        # SPEED FIX: prefer WebM/Opus audio because its headers are at the
-        # beginning of the file, allowing safe growing-file early handoff;
-        # the completed file is still atomically cached in the background.
-        # directly on the critical path to "song plays". The old selector
-        # ("bestaudio/best") happily grabbed the highest-bitrate stream
-        # available (often 160-250kbps opus/webm), which can be 2-3x the
-        # bytes of a perfectly good voice-chat-quality stream for zero
-        # audible benefit over Telegram voice chat. Capping to <=128kbps
-        # (falling back to whatever's available if nothing matches) cuts
-        # download size — and therefore wait time — substantially without
-        # a noticeable quality drop.
-        f# ⚡ SPEED FIX: HLS/m3u8 ko priority do (logs me HLS wale 4s me bajte hain)
         "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
         "bestaudio[ext=webm][abr<=96]/"
         "bestaudio[ext=webm]/"
