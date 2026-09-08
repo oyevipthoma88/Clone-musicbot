@@ -123,11 +123,12 @@ except Exception:  # noqa: BLE001
 # and play its local result.  This is not a second download and does not delay
 # healthy direct playback.
 try:
+    # ⚡ LONG-MIX FIX: Increased grace window to 90s (max 120s) so downloads don't get skipped
     _DOWNLOAD_HANDOFF_GRACE = max(
-        1.0, min(8.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "4")))
+        15.0, min(120.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "90")))
     )
 except Exception:
-    _DOWNLOAD_HANDOFF_GRACE = 4.0
+    _DOWNLOAD_HANDOFF_GRACE = 90.0
 
 try:
     _VIDEO_FALLBACK_MAX_SECONDS = max(
