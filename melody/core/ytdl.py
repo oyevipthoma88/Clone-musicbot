@@ -4211,9 +4211,15 @@ def _innertube_streams_sync(video_id: str) -> "dict | None":
             mime = f.get("mimeType") or ""
             is_video = mime.startswith("video/")
             has_audio = "mp4a" in mime or "opus" in mime or mime.startswith("audio/")
+            
+            # ⚡ SPEED FIX: Detect DASH vs progressive formats
+            # DASH formats have "initRange" or "indexRange" fields
+            is_dash = bool(f.get("initRange") or f.get("indexRange"))
+            protocol = "dash" if is_dash else "https"
+            
             formats.append({
                 "url": url,
-                "protocol": "https",
+                "protocol": protocol,
                 "vcodec": "avc1" if is_video else "none",
                 "acodec": "mp4a" if (has_audio and (not is_video or "," in mime)) else ("none" if is_video else "mp4a"),
                 "height": f.get("height") or 0,
