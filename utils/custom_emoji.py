@@ -92,8 +92,13 @@ async def resolve_custom_emoji(client, ids: Iterable[int]) -> Dict[int, Optional
     for start in range(0, len(wanted), MAX_IDS_PER_REQUEST):
         batch = wanted[start:start + MAX_IDS_PER_REQUEST]
         try:
-            documents = await client.invoke(
-                raw.functions.messages.GetCustomEmojiDocuments(document_id=batch)
+            # ⚡ SPEED FIX: 5s timeout to prevent RPC retry storms (25s+ CPU waste)
+            import asyncio
+            documents = await asyncio.wait_for(
+                client.invoke(
+                    raw.functions.messages.GetCustomEmojiDocuments(document_id=batch)
+                ),
+                timeout=5.0
             )
         except Exception as exc:  # noqa: BLE001 - never let this kill a send
             failures += 1
