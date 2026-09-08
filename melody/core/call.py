@@ -1100,12 +1100,34 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
                 download_already_running = is_download_inflight(
                     track.video_id, audio_only=not video,
                 )
-                if cached_failure or download_already_running:
+                # ⚡ SPEED FIX: Only skip retry if it's a TRUE cached failure AND download is running
+                # Previously it would skip retry if EITHER condition was true, causing immediate fallback
+                if cached_failure and download_already_running:
                     LOGGER.info(
-                        "#stream direct source negative-cached/unavailable for %s — using existing "
-                        "download fallback (no duplicate resolve)", track.video_id,
+                        "#stream direct source cached-failure for %s — download already running, using fallback", track.video_id,
                     )
                     return None
+                elif cached_failure:
+                    # Cached failure but no download running yet - retry with force=True
+                    LOGGER.info(
+                        "#stream direct source cached-failure for %s — retrying with force=True", track.video_id,
+                    )
+                    urls = await resolve_stream_urls(
+                        track.video_id, want_video=video, force=True,
+                    )
+                elif download_already_running:
+                    # Download running but not a cached failure - still retry once
+                    LOGGER.info(
+                        "#stream direct source unavailable for %s — retrying despite download running", track.video_id,
+                    )
+                    urls = await resolve_stream_urls(
+                        track.video_id, want_video=video, force=True,
+                    )
+                else:
+                    # Neither cached failure nor download running - retry
+                    urls = await resolve_stream_urls(
+                        track.video_id, want_video=video, force=True,
+                    )
                 LOGGER.debug(
                     "cached direct resolve unavailable for %s (%s); retrying fresh",
                     track.video_id, cached_exc,
