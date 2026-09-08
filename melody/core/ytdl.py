@@ -41,7 +41,7 @@ from melody.core.pools import YTDL_POOL
 # Keep the budget configurable, but give the authenticated fallback enough time
 # to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "5"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "3.5"))
 except ValueError:
     _RESOLVE_TIMEOUT = 4.5
 # Keep the existing operator override, but prevent a cold direct resolver from
