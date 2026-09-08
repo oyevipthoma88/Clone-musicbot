@@ -1785,9 +1785,11 @@ def _resolve_stream_urls_invidious(video_id: str, want_video: bool) -> dict | No
                 mime = str(item.get("type") or item.get("mimeType") or "")
                 is_video = mime.startswith("video/") or bool(item.get("size")) and item.get("height")
                 has_audio = mime.startswith("audio/") or "audio" in mime or "mp4a" in mime or "opus" in mime
-                formats.append({
-                    "url": url,
-                    "protocol": "https",
+                is_dash = bool(f.get("initRange") or f.get("indexRange"))
+            protocol = "dash" if is_dash else "https"
+            formats.append({
+                "url": url,
+                "protocol": protocol,
                     "vcodec": "avc1" if is_video else "none",
                     "acodec": "mp4a" if has_audio else "none",
                     "height": int(item.get("height") or 0),
@@ -2350,7 +2352,7 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # lands on disk in well under a second.
 # 128 KB is a safe audio prefix (~8 seconds at 128 kbps) and reaches
 # PyTgCalls quickly even on a busy 1-CPU dyno.
-_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 64_000)
+_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 128_000)
 # Minimum share of the total file that must be on disk before handing off.
 _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.01)
 # BUG FIX ("3 ghante ki movie download hone tak wait karta hai"): the ratio
