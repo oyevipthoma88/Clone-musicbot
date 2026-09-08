@@ -84,7 +84,7 @@ _DIRECT_VIDEO_STREAM = os.getenv("DIRECT_VIDEO_STREAM", "true").strip().lower() 
 # consume the entire request budget and turn a valid track into a false crash.
 # Override with PLAY_PROBE_TIMEOUT / PLAY_STARTUP_DEADLINE for a specific region.
 try:
-    _PLAY_PROBE_TIMEOUT = max(0.8, float(os.getenv("PLAY_PROBE_TIMEOUT", "2.5")))
+    _PLAY_PROBE_TIMEOUT = max(0.8, float(os.getenv("PLAY_PROBE_TIMEOUT", "15.0")))
 except Exception:
     _PLAY_PROBE_TIMEOUT = 2.5
 try:
@@ -92,7 +92,7 @@ try:
     # ffprobe could both be healthy yet _stream_track raised at line 1775.
     # Keep this bounded so a dead source still fails predictably.
     _STARTUP_DEADLINE = min(
-        20.0, max(6.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "20.0")))
+        90.0, max(10.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "60.0")))
     )
 except Exception:  # noqa: BLE001
     _STARTUP_DEADLINE = 8.5
@@ -125,7 +125,7 @@ except Exception:  # noqa: BLE001
 try:
     # ⚡ LONG-MIX FIX: Increased grace window to 90s (max 120s) so downloads don't get skipped
     _DOWNLOAD_HANDOFF_GRACE = max(
-        30.0, min(180.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "120")))
+        30.0, min(180.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "180")))
     )
 except Exception:
     _DOWNLOAD_HANDOFF_GRACE = 90.0
