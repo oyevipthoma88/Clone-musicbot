@@ -212,6 +212,8 @@ _ROSTER_TRUST = 25.0
 # participant list is impossible to read (bots cannot call phone.*).
 _call_live: dict = {}
 _call_stamp: dict = {}
+_call_retry_at: dict = {}
+_CALL_RPC_BACKOFF = 30.0
 _CALL_TTL = 30.0   # GetFullChannel is flood-prone: cache the answer longer
 
 
@@ -234,6 +236,11 @@ async def call_is_live(chat_id: int) -> bool:
     call is visible to the bot itself via `full_chat.call`, so the VC chat log
     can still work (loose mode) whenever a VC is live."""
     now = time.monotonic()
+    if now < _call_retry_at.get(chat_id, 0.0):
+        # Telegram's 500 RPC_CALL_FAIL is a service-side transient. Returning
+        # the last observation avoids starting another Pyrogram retry ladder
+        # from the VC watcher while music playback remains independent.
+        return _call_live.get(chat_id, False)
     if chat_id in _call_live and now - _call_stamp.get(chat_id, 0.0) < _CALL_TTL:
         return _call_live[chat_id]
 
@@ -267,6 +274,13 @@ async def call_is_live(chat_id: int) -> bool:
                 flood_for = max(flood_for, wait)
                 LOGGER.debug("call_is_live flood-wait %ss for %s", wait, chat_id)
                 continue
+            if "RPC_CALL_FAIL" in str(exc).upper():
+                _call_retry_at[chat_id] = time.monotonic() + _CALL_RPC_BACKOFF
+                LOGGER.debug(
+                    "call_is_live Telegram RPC unavailable for %s; backing off %.0fs",
+                    chat_id, _CALL_RPC_BACKOFF,
+                )
+                break
             LOGGER.debug("call_is_live lookup failed for %s: %s", chat_id, exc)
             continue
 
