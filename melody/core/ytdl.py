@@ -1048,20 +1048,11 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     • concurrent_fragment_downloads=4 (SPEED FIX — see below).
     """
     fmt = (
-        "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
-        "bestaudio[ext=webm][abr<=96]/"
+        f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 96)}]/"
         "bestaudio[ext=webm]/"
         "bestaudio[ext=opus]/bestaudio[abr<=128]/"
         "bestaudio[ext=ogg]/bestaudio[abr<=128]/best"
         if audio_only
-        # QUALITY ROOT-CAUSE FIX ("vplay me quality low hai"): YouTube ships
-        # exactly one progressive/muxed format today — itag 18, 360p. Asking
-        # for muxed FIRST therefore pinned every downloaded /vplay to 360p
-        # regardless of VIDEO_QUALITY. Ask for a real bestvideo+bestaudio
-        # merge inside the configured height cap instead (H.264 preferred so
-        # the merge into mp4 is a stream copy, not a re-encode) and keep the
-        # muxed itag as the last-resort fallback. The merge still produces ONE
-        # mp4 with a single shared timebase, so audio and video cannot drift.
         else (
             f"bestvideo[height<={_env_int('VIDEO_MAX_HEIGHT', _max_stream_height())}][vcodec^=avc1]"
             "+bestaudio[ext=m4a]"
@@ -1070,7 +1061,6 @@ def _ydl_opts(audio_only: bool = True) -> dict:
             "/best[vcodec!=none][acodec!=none]"
             "/bestvideo+bestaudio/best"
         )
-
     )
     # Start the warm PO-token provider only when yt-dlp is genuinely needed.
     # This is intentionally best-effort: the provider args below retain the
