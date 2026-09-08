@@ -41,9 +41,9 @@ from melody.core.pools import YTDL_POOL
 # Keep the budget configurable, but give the authenticated fallback enough time
 # to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "8.0"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "12.0"))
 except ValueError:
-    _RESOLVE_TIMEOUT = 8.0
+    _RESOLVE_TIMEOUT = 12.0
 # Keep the existing operator override, but prevent a cold direct resolver from
 # consuming the whole playback latency budget before the parallel fallback wins.
 _DIRECT_RESOLVE_MAX = max(1.5, float(os.getenv("DIRECT_RESOLVE_MAX", "3.0")))
@@ -4665,6 +4665,17 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
 
     hls_formats = [f for f in all_formats if hls_ok(f)]
     formats = [f for f in all_formats if usable(f)] or hls_formats
+
+    # ⚡ SPEED ROOT-CAUSE FIX: Allow DASH audio-only formats for direct streaming
+    def dash_audio_ok(f) -> bool:
+        proto = (f.get("protocol") or "")
+        return "dash" in proto and f.get("vcodec") in (None, "none") and f.get("acodec") not in (None, "none")
+
+    if not want_video:
+        dash_audio = [f for f in all_formats if dash_audio_ok(f)]
+        if dash_audio:
+            formats = list(formats) + dash_audio
+
     audio_only_fmts = [f for f in formats if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")]
     video_only_fmts = [f for f in formats if f.get("vcodec") not in (None, "none") and f.get("acodec") in (None, "none")]
     muxed_fmts = [f for f in formats if f.get("vcodec") not in (None, "none") and f.get("acodec") not in (None, "none")]
