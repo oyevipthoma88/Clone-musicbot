@@ -1224,7 +1224,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # download with no pipe involved, sequential fragments only slow
         # the download down for no reason. 4 parallel fragments cuts
         # download time noticeably on typical DASH-fragmented audio.
-        "concurrent_fragment_downloads": _env_int("YT_CONCURRENT_FRAGMENTS", 4),
+        "concurrent_fragment_downloads": _env_int("YT_CONCURRENT_FRAGMENTS", 8),  # ⚡ SPEED: 4→8
         # yt-dlp's YouTube extractor needs an external JS runtime to solve
         # the player challenge and to run the bgutil PO-token script.
         # Only pin a path when a real binary exists — pointing js_runtimes at
@@ -2362,7 +2362,7 @@ _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.01)
 # far faster than 1x realtime playback, so that prefix keeps growing well
 # ahead of the reader for the rest of a multi-hour file.
 _EARLY_HANDOFF_LARGE_FILE_BYTES = _env_int("EARLY_HANDOFF_LARGE_FILE_BYTES", 10_000_000)
-_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 256_000)
+_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 128_000)  # ⚡ SPEED: 256KB→128KB
 # ROOT-CAUSE FIX from the Aug 25 Heroku log:
 #   ffprobe check_stream failed (NoAudioSourceFound: No audio source found on
 #   "/tmp/melody_<id>_a.mp4.part")
