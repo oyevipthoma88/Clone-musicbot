@@ -41,21 +41,21 @@ from melody.core.pools import YTDL_POOL
 # Keep the budget configurable, but give the authenticated fallback enough time
 # to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "12.0"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "2.0"))
 except ValueError:
-    _RESOLVE_TIMEOUT = 12.0
+    _RESOLVE_TIMEOUT = 2.0
 # Keep the existing operator override, but prevent a cold direct resolver from
 # consuming the whole playback latency budget before the parallel fallback wins.
-_DIRECT_RESOLVE_MAX = max(1.5, float(os.getenv("DIRECT_RESOLVE_MAX", "3.0")))
+_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "2.0")))
 _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
 # fallback is started as well (see resolve_stream_urls). The yt-dlp task then
 # remains alive until the absolute resolve deadline, even when InnerTube fails.
 try:
-    _INNERTUBE_HEADSTART = float(os.getenv("INNERTUBE_HEADSTART", "0.35"))
+    _INNERTUBE_HEADSTART = float(os.getenv("INNERTUBE_HEADSTART", "0.10"))
 except Exception:  # noqa: BLE001
-    _INNERTUBE_HEADSTART = 0.35
+    _INNERTUBE_HEADSTART = 0.10
 
 # How long the fast metadata race (YouTube Data API v3 + InnerTube) is given
 # before falling back to yt-dlp. Kept short on purpose — see
@@ -1189,10 +1189,10 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # SPEED FIX: a stuck CDN connection used to burn 15s per socket and
         # up to 8 retries per rung before the ladder even moved on — that is
         # the "kabhi kabhi _stream_track failed" case taking 20s+ first.
-        "socket_timeout": _env_int("YT_SOCKET_TIMEOUT", 8),
-        "retries": _env_int("YT_RETRIES", 3),
-        "fragment_retries": _env_int("YT_FRAGMENT_RETRIES", 5),
-        "extractor_retries": _env_int("YT_EXTRACTOR_RETRIES", 2),
+        "socket_timeout": _env_int("YT_SOCKET_TIMEOUT", 5),
+        "retries": _env_int("YT_RETRIES", 1),
+        "fragment_retries": _env_int("YT_FRAGMENT_RETRIES", 2),
+        "extractor_retries": _env_int("YT_EXTRACTOR_RETRIES", 1),
         "file_access_retries": 3,
         # ROOT-CAUSE FIX (⚠️ "prefetch_next failed" →
         #   yt_dlp/downloader/external.py real_download →
@@ -2350,9 +2350,9 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # lands on disk in well under a second.
 # 128 KB is a safe audio prefix (~8 seconds at 128 kbps) and reaches
 # PyTgCalls quickly even on a busy 1-CPU dyno.
-_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 128_000)
+_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 64_000)
 # Minimum share of the total file that must be on disk before handing off.
-_EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.02)
+_EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.01)
 # BUG FIX ("3 ghante ki movie download hone tak wait karta hai"): the ratio
 # above is only sane for small files. A percentage of a multi-GB movie is
 # itself gigabytes — waiting for 35% of a 3 GB file means buffering ~1 GB
@@ -2362,7 +2362,7 @@ _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.02)
 # far faster than 1x realtime playback, so that prefix keeps growing well
 # ahead of the reader for the rest of a multi-hour file.
 _EARLY_HANDOFF_LARGE_FILE_BYTES = _env_int("EARLY_HANDOFF_LARGE_FILE_BYTES", 10_000_000)
-_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 512_000)
+_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 256_000)
 # ROOT-CAUSE FIX from the Aug 25 Heroku log:
 #   ffprobe check_stream failed (NoAudioSourceFound: No audio source found on
 #   "/tmp/melody_<id>_a.mp4.part")
@@ -2801,7 +2801,15 @@ def _download_audio_sync(video_id: str, audio_only: bool = True,
         # early sources; all other formats wait for the atomic final rename.
         if not audio_only or not _early_audio_path_is_safe(fp or ""):
             return
+        # Native fragment downloads do not consistently populate
+        # downloaded_bytes on cloud hosts. The growing file size is the real
+        # source of truth, otherwise early handoff waits until full completion.
         downloaded = d.get("downloaded_bytes") or 0
+        if fp:
+            try:
+                downloaded = max(downloaded, os.path.getsize(fp))
+            except OSError:
+                pass
         total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
         ready = _early_handoff_ready(downloaded, total)
         if fp and ready and os.path.exists(fp):
