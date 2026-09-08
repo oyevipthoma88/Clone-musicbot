@@ -438,6 +438,19 @@ _AUTOPLAY_MAX_FAILS = 4
 _AUTOPLAY_COOLDOWN = 60.0    # short breather, then AutoPlay retries by itself
 
 
+def autoplay_retry_after(chat_id: int) -> float:
+    """Return the remaining cooldown before AutoPlay may try again.
+
+    ``try_autoplay`` returns ``False`` during a cooldown, but callers must
+    distinguish that state from a genuinely empty recommendation list. Keeping
+    this read-only helper at the policy boundary prevents the call lifecycle
+    from dropping the voice chat during a recoverable burst of bad sources.
+    """
+    import time
+
+    return max(0.0, _autoplay_cooldown.get(chat_id, 0.0) - time.time())
+
+
 def reset_autoplay_guard(chat_id: int) -> None:
     """Clear the AutoPlay anti-spam counter (called on a fresh /play)."""
     _last_autoplay.pop(chat_id, None)

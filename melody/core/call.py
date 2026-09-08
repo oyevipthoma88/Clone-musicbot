@@ -285,6 +285,7 @@ _stream_commit_locks: dict[int, asyncio.Lock] = {}
 # queue positions. Repeated triggers cannot launch duplicate yt-dlp work for
 # the same upcoming track.
 _prefetch_inflight: dict[int, set[str]] = {}
+_autoplay_retry_scheduled: set[int] = set()
 _FORCE_DOWNLOAD_PRIORITY = -10
 
 # ─── Play generation / idempotency guards ─────────────────────────────────
@@ -753,6 +754,27 @@ async def _resume_if_premature_end(chat_id: int) -> bool:
         return False
 
 
+async def _retry_autoplay_after_cooldown(chat_id: int, expected_video_id: str | None, delay: float):
+    """Retry a recoverable AutoPlay cooldown without dropping the VC.
+
+    The retry is fenced to the track that ended. A manual /play or /vplay
+    changes the current video while this task sleeps; in that case the retry
+    is discarded instead of interrupting the user's new request.
+    """
+    try:
+        await asyncio.sleep(max(0.1, delay))
+        current = get_current(chat_id)
+        if expected_video_id and getattr(current, "video_id", None) != expected_video_id:
+            return
+        await _play_next(chat_id)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        LOGGER.debug("delayed AutoPlay retry failed for %s", chat_id, exc_info=True)
+    finally:
+        _autoplay_retry_scheduled.discard(chat_id)
+
+
 async def _play_next(chat_id: int):
     """
     Advance queue or handle autoplay / stop.
@@ -812,8 +834,27 @@ async def _play_next(chat_id: int):
         return
 
     _prefetch_inflight.pop(chat_id, None)
-    if await is_autoplay_on(chat_id) and await try_autoplay(chat_id):
-        return
+    if await is_autoplay_on(chat_id):
+        if await try_autoplay(chat_id):
+            return
+        # A short-lived burst of unavailable/expired suggestions is a
+        # recoverable state. try_autoplay() applies a cooldown so it does not
+        # hammer the same bad sources; do not leave the voice chat here.
+        from melody.core.autoplay import autoplay_retry_after
+        retry_after = autoplay_retry_after(chat_id)
+        if retry_after > 0 and chat_id not in _autoplay_retry_scheduled:
+            _autoplay_retry_scheduled.add(chat_id)
+            current = get_current(chat_id)
+            spawn(_retry_autoplay_after_cooldown(
+                chat_id,
+                getattr(current, "video_id", None),
+                retry_after,
+            ), name=f"autoplay-retry:{chat_id}")
+            LOGGER.info(
+                "AutoPlay cooldown in %s; keeping voice chat and retrying in %.0fs",
+                chat_id, retry_after,
+            )
+            return
 
     _mark_leaving(chat_id)
     _forget_call_state(chat_id)
