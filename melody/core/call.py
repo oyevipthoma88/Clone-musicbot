@@ -1102,6 +1102,31 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
                         track.video_id, type(retry_exc).__name__,
                     )
                     return None
+    except Exception as exc:
+        # Resolver-level failures (403, empty formats, expired profile, or a
+        # stale signed URL) happen before PyTgCalls can perform its probe. Give
+        # the provider/client ladder one fresh attempt as well; otherwise the
+        # first failed profile immediately forces a 30-40s download even when a
+        # second profile would provide a playable URL in under 5s. The force
+        # flag prevents recursion and retry storms.
+        if not force and not str(getattr(track, "stream_url", "") or "").lower().startswith(
+            ("http://127.0.0.1:", "http://localhost:")
+        ):
+            try:
+                return await _build_direct_stream(
+                    chat_id, track, video, seconds, force=True,
+                )
+            except Exception as retry_exc:
+                LOGGER.info(
+                    "#stream fresh resolver retry failed for %s (%s)",
+                    getattr(track, "video_id", "?"), type(retry_exc).__name__,
+                )
+        LOGGER.info(
+            "#stream direct-stream unavailable for %s (%s: %r) — falling back to download",
+            getattr(track, "video_id", "?"), type(exc).__name__, exc,
+        )
+        return None
+
     audio_url = urls.get("audio")
     video_url = urls.get("video")
     if not audio_url or (video and not video_url):
