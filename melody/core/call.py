@@ -1080,68 +1080,28 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
                 "headers": {},
             }
         else:
-            # Consume the warmed direct URL first. The old code always used
-            # force=True here, throwing away the warm resolver result and
-            # adding 4–8 seconds to every cold/queued playback. Only retry
-            # with a fresh resolve when the cache is actually missing/stale.
+            # ⚡ SPEED FIX: Simplified retry logic - try cache first, then force retry
             try:
                 urls = await resolve_stream_urls(
                     track.video_id, want_video=video, force=False,
                 )
             except Exception as cached_exc:
-                # A negative result is single-flight and deliberately cached by
-                # ytdl.py. Forcing an immediate second resolver run defeats that
-                # protection and adds another full InnerTube/yt-dlp timeout while
-                # the local download fallback is already progressing. Only force
-                # a fresh resolve for a non-cached error (for example an expired
-                # signed URL); known-unavailable sources should yield immediately.
-                cached_failure = "cached failure" in str(cached_exc).lower()
-                from melody.core.ytdl import is_download_inflight
-                download_already_running = is_download_inflight(
-                    track.video_id, audio_only=not video,
+                # First attempt failed - retry with force=True to bypass negative cache
+                LOGGER.info(
+                    "#stream direct source failed for %s (%s) — retrying with force=True",
+                    track.video_id, type(cached_exc).__name__,
                 )
-                # ⚡ SPEED FIX: Only skip retry if it's a TRUE cached failure AND download is running
-                # Previously it would skip retry if EITHER condition was true, causing immediate fallback
-                if cached_failure and download_already_running:
+                try:
+                    urls = await resolve_stream_urls(
+                        track.video_id, want_video=video, force=True,
+                    )
+                except Exception as retry_exc:
+                    # Both attempts failed - fall back to download
                     LOGGER.info(
-                        "#stream direct source cached-failure for %s — download already running, using fallback", track.video_id,
+                        "#stream direct source unavailable for %s after retry (%s) — using download fallback",
+                        track.video_id, type(retry_exc).__name__,
                     )
                     return None
-                elif cached_failure:
-                    # Cached failure but no download running yet - retry with force=True
-                    LOGGER.info(
-                        "#stream direct source cached-failure for %s — retrying with force=True", track.video_id,
-                    )
-                    urls = await resolve_stream_urls(
-                        track.video_id, want_video=video, force=True,
-                    )
-                elif download_already_running:
-                    # Download running but not a cached failure - still retry once
-                    LOGGER.info(
-                        "#stream direct source unavailable for %s — retrying despite download running", track.video_id,
-                    )
-                    urls = await resolve_stream_urls(
-                        track.video_id, want_video=video, force=True,
-                    )
-                else:
-                    # Neither cached failure nor download running - retry
-                    urls = await resolve_stream_urls(
-                        track.video_id, want_video=video, force=True,
-                    )
-                LOGGER.debug(
-                    "cached direct resolve unavailable for %s (%s); retrying fresh",
-                    track.video_id, cached_exc,
-                )
-                urls = await resolve_stream_urls(
-                    track.video_id, want_video=video, force=True,
-                )
-    except Exception as exc:
-        LOGGER.info(
-            "#stream CDN profile unavailable for %s (%s) — download fallback engaged",
-            getattr(track, "video_id", "?"), exc,
-        )
-        return None
-
     audio_url = urls.get("audio")
     video_url = urls.get("video")
     if not audio_url or (video and not video_url):
