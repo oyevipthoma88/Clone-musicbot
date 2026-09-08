@@ -4705,6 +4705,21 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
         audio_pick = max(capped or audio_only_fmts, key=abr)
 
     if not want_video:
+        # ⚡ SPEED FIX: Prioritize DASH audio formats when available
+        # DASH audio-only streams are the fastest option from datacenter IPs
+        dash_audio_fmts = [
+            f for f in formats 
+            if (f.get("protocol") or "") == "dash" 
+            and f.get("acodec") not in (None, "none") 
+            and f.get("vcodec") in (None, "none")
+        ]
+        
+        # If DASH audio is available, use it immediately
+        if dash_audio_fmts:
+            best_dash = max(dash_audio_fmts, key=lambda f: f.get("abr") or f.get("tbr") or 0)
+            LOGGER.info("#stream selected DASH audio format (abr=%s)", best_dash.get("abr") or best_dash.get("tbr"))
+            return {"audio": best_dash["url"], "video": None}
+        
         # When an audio-only HTTPS format exists it is the fastest and safest
         # choice. If it does not, prefer HLS over a muxed HTTPS itag: cloud
         # YouTube responses frequently expose muxed googlevideo URLs that are
