@@ -92,7 +92,7 @@ try:
     # ffprobe could both be healthy yet _stream_track raised at line 1775.
     # Keep this bounded so a dead source still fails predictably.
     _STARTUP_DEADLINE = min(
-        10.0, max(4.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "8.5")))
+        15.0, max(6.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "12.0")))
     )
 except Exception:  # noqa: BLE001
     _STARTUP_DEADLINE = 8.5
@@ -125,7 +125,7 @@ except Exception:  # noqa: BLE001
 try:
     # ⚡ LONG-MIX FIX: Increased grace window to 90s (max 120s) so downloads don't get skipped
     _DOWNLOAD_HANDOFF_GRACE = max(
-        15.0, min(120.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "90")))
+        30.0, min(180.0, float(os.getenv("DOWNLOAD_HANDOFF_GRACE", "120")))
     )
 except Exception:
     _DOWNLOAD_HANDOFF_GRACE = 90.0
