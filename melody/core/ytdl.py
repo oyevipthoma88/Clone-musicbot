@@ -4661,7 +4661,13 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
 
     def usable(f) -> bool:
         proto = (f.get("protocol") or "")
-        return proto.startswith("http") and "m3u8" not in proto and "dash" not in proto
+        # ⚡ ULTRA SPEED FIX: Accept DASH audio-only formats (ffmpeg can stream them directly)
+        # Rejecting DASH was forcing 10-15s download fallback for every song from datacenter IPs
+        if "m3u8" in proto:
+            return False  # HLS handled separately
+        is_audio_only = f.get("vcodec") in (None, "none") and f.get("acodec") not in (None, "none")
+        is_dash_audio = "dash" in proto and is_audio_only
+        return proto.startswith("http") and (not ("dash" in proto) or is_dash_audio)
 
     def hls_ok(f) -> bool:
         """HLS is a perfectly good *streaming* source for ffmpeg.
