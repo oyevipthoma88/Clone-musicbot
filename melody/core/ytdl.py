@@ -2371,7 +2371,7 @@ _EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 1
 # containers reliably until the final atomic rename. Audio-only WebM/Opus/MP3
 # can opt into the validated prefix path below; the shared future and download
 # gate still wait for the complete file before any cache/persistence operation.
-_EARLY_HANDOFF_ENABLED = _env_flag("EARLY_HANDOFF", False) and not _ON_CLOUD_HOST
+_EARLY_HANDOFF_ENABLED = _env_flag("EARLY_HANDOFF", True)  # ⚡ 5-SEC FIX: Enable on cloud for instant playback
 # Audio-only WebM/Opus files carry their decode headers at the beginning, but
 # regular files still expose EOF whenever the downloader loses its lead. Keep
 # this optimization opt-in on cloud hosts; video/MP4/M4A remain completion-only.
