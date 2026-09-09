@@ -764,6 +764,20 @@ async def main():
         from melody.core.ytdl import warm_popular_metadata
         spawn(warm_popular_metadata())
 
+    # Prime the direct-CDN resolver itself (yt-dlp player JS + nsig cache +
+    # PO-token round-trip). Without this the FIRST /play after a restart pays
+    # a ~5s cold-start that later plays never pay — exactly the 11s vs 5.5s
+    # split visible in production logs. Fire-and-forget; failures are silent.
+    if not Config._LOW_MEMORY_PROFILE or Config.STARTUP_WARMUPS:
+        async def _warm_direct_resolver() -> None:
+            try:
+                from melody.core.ytdl import resolve_stream_urls
+                await resolve_stream_urls("dQw4w9WgXcQ", force=True)
+                LOGGER.info("✅ direct-CDN resolver pre-warmed (first /play stays fast)")
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.info("direct-CDN resolver warmup skipped: %s", exc)
+        spawn(_warm_direct_resolver())
+
     # R14 FIX: keep resident memory from ratcheting up until Heroku reports
     # "Error R14 (Memory quota exceeded)". See utils/memguard.py.
     from utils.memguard import memory_guard
