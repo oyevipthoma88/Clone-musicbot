@@ -2539,16 +2539,6 @@ _DOWNLOAD_LADDER: tuple = (
     {"concurrent_fragment_downloads": 8},                      # flaky CDN / partial fragments
     # TRUNCATED: Removed 6 more rungs. If the first 2 fail with 403,
     # the IP is blocked and retrying 8 times wastes 16 seconds.
-): YouTube hands SABR-only
-    # streaming URLs to the default/web clients. yt-dlp resolves them, starts
-    # the download and receives 0 bytes. The `tv`/`tv_simply` and `web_safari`
-    # clients still advertise plain progressive/DASH URLs, and asking for a
-    # protocol-restricted (https-only, no SABR/HLS manifest) format keeps the
-    # native downloader on a URL that actually returns bytes.
-    {"_client": ["tv_simply", "tv"], "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/bestaudio[protocol^=http]/bestaudio/best",
-     "concurrent_fragment_downloads": 8, "_no_merge": True},
-    {"_client": ["web_safari", "web_embedded"],
-     "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/bestaudio[protocol^=http]/bestaudio/best", "_no_merge": True},
 )
 
 
