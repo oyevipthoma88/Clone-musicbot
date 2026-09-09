@@ -41,12 +41,12 @@ from melody.core.pools import YTDL_POOL
 # Keep the budget configurable, but give the authenticated fallback enough time
 # to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "1.5"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "4.0"))
 except ValueError:
     _RESOLVE_TIMEOUT = 4.5
 # Keep the existing operator override, but prevent a cold direct resolver from
 # consuming the whole playback latency budget before the parallel fallback wins.
-_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "1.5")))
+_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "4.0")))
 _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
@@ -1047,12 +1047,18 @@ def _ydl_opts(audio_only: bool = True) -> dict:
       bypass declaration helps with most non-DRM videos.
     • concurrent_fragment_downloads=8 (SPEED FIX — see below).
     """
+    # SPEED FIX ("gana strictly 5 sec ke andar baje"): HLS/m4a was preferred
+    # first, but a growing .mp4/.part cannot be handed to PyTgCalls early
+    # (moov atom at EOF), so every fallback play waited for the COMPLETE
+    # download (~10s in the Heroku log). WebM/Opus carries its headers at the
+    # start, so the early-handoff prefix path works and playback begins in
+    # ~1-2s. HLS stays last as a compatibility fallback.
     fmt = (
-        "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
         f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 48)}]/"
         "bestaudio[ext=webm]/"
-        "bestaudio[ext=opus]/bestaudio[abr<=128]/"
-        "bestaudio[ext=ogg]/bestaudio[abr<=128]/best"
+        "bestaudio[ext=opus]/bestaudio[ext=ogg]/"
+        "bestaudio[acodec=opus]/bestaudio[abr<=128]/"
+        "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/best"
         if audio_only
         else (
             f"bestvideo[height<={_env_int('VIDEO_MAX_HEIGHT', _max_stream_height())}][vcodec^=avc1]"
