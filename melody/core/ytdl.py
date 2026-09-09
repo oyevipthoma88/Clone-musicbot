@@ -1049,8 +1049,8 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     """
     fmt = (
         "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/"
-        "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
         "bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/"
+        "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
         "bestaudio/best"
         if audio_only
         else (
@@ -1100,7 +1100,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # often than WEB/SABR on Heroku. Keep TV/iOS/Safari as fallbacks so a
         # client-specific block never removes playback entirely.
         # web_safari provides cloud-safe HLS; default/iOS remain fallbacks.
-        "player_client": ["web_safari", "android_vr", "default", "ios"],
+        "player_client": ["android_vr", "ios", "android_music", "android", "tv_embedded", "mweb", "web_creator", "web", "web_safari"],
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
         # listing are never used by playback but cost a round-trip each.
@@ -2332,7 +2332,7 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # lands on disk in well under a second.
 # 128 KB is a safe audio prefix (~8 seconds at 128 kbps) and reaches
 # PyTgCalls quickly even on a busy 1-CPU dyno.
-_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 60_000)  # SPEED: 60KB prefix is enough for WebM/Opus header+audio
+_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 32_000)  # SPEED: 60KB prefix is enough for WebM/Opus header+audio
 # Minimum share of the total file that must be on disk before handing off.
 _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.001)
 # BUG FIX ("3 ghante ki movie download hone tak wait karta hai"): the ratio
@@ -2344,7 +2344,7 @@ _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.001)
 # far faster than 1x realtime playback, so that prefix keeps growing well
 # ahead of the reader for the rest of a multi-hour file.
 _EARLY_HANDOFF_LARGE_FILE_BYTES = _env_int("EARLY_HANDOFF_LARGE_FILE_BYTES", 10_000_000)
-_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 80_000)  # SPEED: 80KB prefix
+_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 32_000)  # SPEED: 80KB prefix
 # ROOT-CAUSE FIX from the Aug 25 Heroku log:
 #   ffprobe check_stream failed (NoAudioSourceFound: No audio source found on
 #   "/tmp/melody_<id>_a.mp4.part")
