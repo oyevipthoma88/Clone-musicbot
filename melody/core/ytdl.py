@@ -1048,10 +1048,9 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     • concurrent_fragment_downloads=8 (SPEED FIX — see below).
     """
     fmt = (
-        "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/"
-        "bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/"
-        "bestaudio[ext=webm]/bestaudio[ext=opus]/"
         "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
+        "bestaudio[ext=webm]/bestaudio[ext=opus]/"
+        "bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/"
         "bestaudio/best"
         if audio_only
         else (
@@ -1101,7 +1100,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # often than WEB/SABR on Heroku. Keep TV/iOS/Safari as fallbacks so a
         # client-specific block never removes playback entirely.
         # web_safari provides cloud-safe HLS; default/iOS remain fallbacks.
-        "player_client": ["ios", "android_music", "web_creator", "web", "web_safari", "mweb"],
+        "player_client": ["tv_embedded", "android_music", "ios", "web_creator", "web"],
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
         # listing are never used by playback but cost a round-trip each.
@@ -1171,8 +1170,8 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # up to 8 retries per rung before the ladder even moved on — that is
         # the "kabhi kabhi _stream_track failed" case taking 20s+ first.
         "socket_timeout": _env_int("YT_SOCKET_TIMEOUT", 5),
-        "retries": _env_int("YT_RETRIES", 2),
-        "fragment_retries": _env_int("YT_FRAGMENT_RETRIES", 2),
+        "retries": _env_int("YT_RETRIES", 1),
+        "fragment_retries": _env_int("YT_FRAGMENT_RETRIES", 1),
         "extractor_retries": _env_int("YT_EXTRACTOR_RETRIES", 1),
         "file_access_retries": 3,
         # ROOT-CAUSE FIX (⚠️ "prefetch_next failed" →
