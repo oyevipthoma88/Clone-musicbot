@@ -67,6 +67,16 @@ except (ValueError, RuntimeError):
     pass
 
 YTDL_POOL = ThreadPoolExecutor(max_workers=YTDL_WORKERS, thread_name_prefix="melody-ytdl")
+
+# SPEED ROOT FIX ("gana 10s baad bajta hai"): the InnerTube player probes are
+# pure network waits (~150 ms each) but they used to be submitted into
+# YTDL_POOL, which only has 2 workers on a 1 GB dyno and is normally busy with
+# a yt-dlp extraction/download. The probes therefore sat in the queue until
+# their own timeout expired, every /play logged "direct source unavailable"
+# and fell back to the slow full download. They now get their own tiny pool so
+# the fast path can never be starved by yt-dlp.
+NET_WORKERS = _env_int("NET_WORKERS", 8)
+NET_POOL = ThreadPoolExecutor(max_workers=NET_WORKERS, thread_name_prefix="melody-net")
 IO_POOL = ThreadPoolExecutor(max_workers=IO_WORKERS, thread_name_prefix="melody-io")
 
 
@@ -74,3 +84,4 @@ IO_POOL = ThreadPoolExecutor(max_workers=IO_WORKERS, thread_name_prefix="melody-
 def _shutdown() -> None:  # pragma: no cover - process teardown
     YTDL_POOL.shutdown(wait=False, cancel_futures=True)
     IO_POOL.shutdown(wait=False, cancel_futures=True)
+    NET_POOL.shutdown(wait=False, cancel_futures=True)
