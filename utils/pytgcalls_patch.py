@@ -583,8 +583,11 @@ def apply_pytgcalls_probe_patch() -> None:
             # still writing). Wait for it to grow and probe one last time.
             if not _is_local_playable(path) and await _wait_for_growth(path):
                 try:
-                    return await original(
-                        ffmpeg_parameters, path, stream_parameters, *args, **kwargs
+                    return await _asyncio.wait_for(
+                        original(
+                            ffmpeg_parameters, path, stream_parameters, *args, **kwargs
+                        ),
+                        timeout=PROBE_TIMEOUT_LOCAL,
                     )
                 except Exception as exc:
                     name = type(exc).__name__

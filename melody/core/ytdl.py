@@ -1052,7 +1052,11 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 48)}]/"
         "bestaudio[ext=webm]/"
         "bestaudio[ext=opus]/bestaudio[abr<=128]/"
-        "bestaudio[ext=ogg]/bestaudio[abr<=128]/best"
+        "bestaudio[ext=ogg]/bestaudio[abr<=128]/"
+        "bestaudio[ext=m4a][protocol*=dash]/"
+        "bestaudio[format_id=140]/bestaudio[format_id=139]/"
+        "bestaudio[format_id=251]/bestaudio[format_id=250]/bestaudio[format_id=249]/"
+        "best"
         if audio_only
         else (
             f"bestvideo[height<={_env_int('VIDEO_MAX_HEIGHT', _max_stream_height())}][vcodec^=avc1]"
@@ -2411,12 +2415,15 @@ def _early_audio_path_is_safe(path: str) -> bool:
     if ext in _EARLY_AUDIO_STREAMABLE_EXTS:
         return True
         
-    # ROOT-FIX: Allow early handoff for fragmented mp4 (m4a/mp4) files.
+    # ROOT-FIX: Allow early handoff ONLY for strictly fragmented mp4 (m4a/mp4).
+    # Progressive M4A has 'mdat' at the start but 'moov' at the EOF.
+    # ffprobe hangs waiting for EOF on growing progressive M4A, causing TimeoutError!
+    # Fragmented M4A has 'styp' or 'moof' boxes at the start, which ffprobe probes instantly.
     if ext in {"m4a", "mp4"}:
         try:
             with open(path, "rb") as f:
                 header = f.read(8192)
-            return b"moof" in header or b"mdat" in header or b"styp" in header
+            return b"styp" in header or b"moof" in header
         except Exception:
             return False
             
@@ -2532,10 +2539,10 @@ _DOWNLOAD_LADDER: tuple = (
     # clients still advertise plain progressive/DASH URLs, and asking for a
     # protocol-restricted (https-only, no SABR/HLS manifest) format keeps the
     # native downloader on a URL that actually returns bytes.
-    {"_client": ["tv_simply", "tv"], "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[protocol^=http]/bestaudio/best",
+    {"_client": ["tv_simply", "tv"], "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/bestaudio[protocol^=http]/bestaudio/best",
      "concurrent_fragment_downloads": 1, "_no_merge": True},
     {"_client": ["web_safari", "web_embedded"],
-     "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[protocol^=http]/bestaudio/best", "_no_merge": True},
+     "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/bestaudio[protocol^=http]/bestaudio/best", "_no_merge": True},
 )
 
 
