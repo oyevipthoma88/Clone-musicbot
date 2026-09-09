@@ -4645,6 +4645,16 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
     """
     all_formats = [f for f in (info.get("formats") or []) if f.get("url")]
 
+    # ⚡ ROOT FIX JUGAD: Top-level HLS manifest check (HIGHEST PRIORITY)
+    # Ye format filtering se PEHLE check hota hai, taaki hlsManifestUrl
+    # milne par turant return ho. fallback_audio bug bypass hota hai.
+    _hls_top = info.get("hlsManifestUrl")
+    if _hls_top and isinstance(_hls_top, str) and _hls_top.startswith("http"):
+        if want_video:
+            return {"video": _hls_top, "audio": None}
+        return {"video": None, "audio": _hls_top}
+
+
     # ⚡ JUGAD LAYER 1: Top-level HLS manifest (bypasses format list entirely)
     hls_manifest = info.get("hlsManifestUrl")
     if hls_manifest and isinstance(hls_manifest, str) and hls_manifest.startswith("http"):
@@ -4772,6 +4782,8 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
         # complete download.
         if info.get("hlsManifestUrl"):
             picked["fallback_audio"] = info["hlsManifestUrl"]
+        if not picked.get("audio"):
+            picked["audio"] = info["hlsManifestUrl"]
         return picked
 
     def height(f):
@@ -4837,6 +4849,13 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
     if top_url and isinstance(top_url, str) and top_url.startswith("http"):
         return {"video": top_url if want_video else None,
                 "audio": top_url if not want_video else None}
+    # ⚡ ROOT FIX JUGAD: Absolute last resort - top-level URL
+    _top_url = info.get("url")
+    if _top_url and isinstance(_top_url, str) and _top_url.startswith("http"):
+        if want_video:
+            return {"video": _top_url, "audio": None}
+        return {"video": None, "audio": _top_url}
+
     return {}
 
 
