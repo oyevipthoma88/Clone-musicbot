@@ -2793,13 +2793,33 @@ def _download_audio_sync(video_id: str, audio_only: bool = True,
             return
         if d.get("status") != "downloading":
             return
-        fp = d.get("filename") or d.get("tmpfilename")
-        if fp and not os.path.exists(fp):
-            # yt-dlp writes into "<final>.part" first — that's the file that
-            # actually exists while the download runs.
-            alt = d.get("tmpfilename") or f"{fp}.part"
-            if alt and os.path.exists(alt):
-                fp = alt
+        # yt-dlp's progress payload often reports the FINAL filename in both
+        # `filename` and `tmpfilename`, while its native downloader is actually
+        # writing to `<filename>.part`. The old `or` expression selected that
+        # non-existent tmpfilename and never tried the real `.part` path, so
+        # early handoff never fired and playback waited for the full download.
+        reported = [d.get("tmpfilename"), d.get("filename")]
+        candidates = []
+        for candidate in reported:
+            if not candidate:
+                continue
+            candidates.extend((candidate, f"{candidate}.part"))
+        # Some yt-dlp versions report a format-suffixed temporary filename.
+        # Include files in this attempt's private staging directory, then pick
+        # the largest existing candidate: that is the file receiving bytes.
+        candidates.extend(glob.glob(os.path.join(attempt_dir, "file.*")))
+        existing_candidates = []
+        for candidate in dict.fromkeys(candidates):
+            try:
+                if os.path.isfile(candidate):
+                    existing_candidates.append(candidate)
+            except OSError:
+                continue
+        fp = max(
+            existing_candidates,
+            key=lambda candidate: os.path.getsize(candidate),
+            default=None,
+        )
         # Never hand a growing MP4/M4A (moov atom at EOF) or a video file to
         # PyTgCalls. Audio-only WebM/Opus/MP3-style prefixes are the only safe
         # early sources; all other formats wait for the atomic final rename.
