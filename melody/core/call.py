@@ -3619,7 +3619,7 @@ async def seek_stream(chat_id: int, seconds: int) -> int:
             raise RuntimeError(
                 "large video direct stream unavailable; seek cannot use full-file fallback"
             )
-        local_path = await download_audio(track.video_id, audio_only=not video)
+        local_path = await download_audio(track.video_id, audio_only=not video, allow_early=True)
         stream = _local_media_stream(chat_id, local_path, video, seconds)
 
     _silence_playing.pop(chat_id, None)
@@ -3639,7 +3639,7 @@ async def seek_stream(chat_id: int, seconds: int) -> int:
             raise RuntimeError(
                 "large video direct stream unavailable; seek cannot use full-file fallback"
             ) from play_exc
-        local_path = await download_audio(track.video_id, audio_only=not video)
+        local_path = await download_audio(track.video_id, audio_only=not video, allow_early=True)
         stream = _local_media_stream(chat_id, local_path, video, seconds)
         await _pytgcalls.play(chat_id, stream)
     _active[chat_id] = True
