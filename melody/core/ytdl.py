@@ -1216,6 +1216,8 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # Merging only kicks in for the bestvideo+bestaudio fallback above;
         # it guarantees ONE file with both tracks instead of two siblings.
         "merge_output_format": "mp4",
+        # BYPASS 403: Use curl_cffi to spoof Chrome TLS fingerprint
+        "impersonate": "chrome",
         "http_headers": {
             "User-Agent": user_agent,
             "Referer": "https://www.youtube.com/",
@@ -2535,16 +2537,9 @@ def is_download_in_progress(video_id: str, audio_only: bool = True) -> bool:
 _DOWNLOAD_LADDER: tuple = (
     {},                                                        # as configured
     {"concurrent_fragment_downloads": 8},                      # flaky CDN / partial fragments
-    {"_client": ["android_vr", "web_safari"]},                 # different API surface
-    {"_client": ["ios", "mweb"], "concurrent_fragment_downloads": 8},
-    {"_format": "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/bestaudio/best", "_client": ["tv", "web"]},   # format vanished
-    # Last rung — never merge, never post-process. Fixes the recurring
-    # "_stream_track failed ... YoutubeDL.post_process → run_all_pps"
-    # crash, which is always an ffmpeg merge/convert failure on a DASH
-    # video pair, by falling back to a single already-muxed file.
-    {"_format": "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/bestaudio/best", "_no_merge": True},
-    # ROOT-CAUSE FIX ("ERROR: The downloaded file is empty", repeated for every
-    # rung, followed by "_stream_track failed"): YouTube hands SABR-only
+    # TRUNCATED: Removed 6 more rungs. If the first 2 fail with 403,
+    # the IP is blocked and retrying 8 times wastes 16 seconds.
+): YouTube hands SABR-only
     # streaming URLs to the default/web clients. yt-dlp resolves them, starts
     # the download and receives 0 bytes. The `tv`/`tv_simply` and `web_safari`
     # clients still advertise plain progressive/DASH URLs, and asking for a
