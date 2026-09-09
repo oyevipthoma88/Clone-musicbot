@@ -1048,15 +1048,10 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     • concurrent_fragment_downloads=8 (SPEED FIX — see below).
     """
     fmt = (
+        "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/"
         "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
-        f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 48)}]/"
-        "bestaudio[ext=webm]/"
-        "bestaudio[ext=opus]/bestaudio[abr<=128]/"
-        "bestaudio[ext=ogg]/bestaudio[abr<=128]/"
-        "bestaudio[ext=m4a][protocol*=dash]/"
-        "bestaudio[format_id=140]/bestaudio[format_id=139]/"
-        "bestaudio[format_id=251]/bestaudio[format_id=250]/bestaudio[format_id=249]/"
-        "best"
+        "bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/"
+        "bestaudio/best"
         if audio_only
         else (
             f"bestvideo[height<={_env_int('VIDEO_MAX_HEIGHT', _max_stream_height())}][vcodec^=avc1]"

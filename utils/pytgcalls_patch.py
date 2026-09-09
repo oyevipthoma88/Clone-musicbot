@@ -490,6 +490,10 @@ def apply_pytgcalls_probe_patch() -> None:
         # with. Skip the pre-check instead of killing every single /play.
         if not _ffprobe_available():
             return None
+        # SPEED JUGAAD: Skip ffprobe for growing .part files to prevent infinite hang
+        if str(path).endswith(".part") or ".part-" in str(path) or ".ytdl" in str(path):
+            log.info("⚡ Early-handoff partial file — skipping ffprobe.")
+            return None
         # The Telegram range proxy is an in-process source controlled by this
         # worker. ffprobe cannot reliably inspect a live MKV/MP4 range stream
         # before FFmpeg opens it, so probing only adds a 4-second timeout and
