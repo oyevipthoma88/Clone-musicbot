@@ -2400,30 +2400,46 @@ def _early_handoff_ready(downloaded: int, total: int = 0) -> bool:
 
 
 def _early_audio_path_is_safe(path: str) -> bool:
-    """Return True only for containers whose prefix is probeable/playable."""
-    name = os.path.basename(path or "").lower()
+    """MAX-EFFORT: Return True for ANY audio file that has valid MP4/WebM header.
+    
+    - WebM/Opus/OGG: Always safe (header at start)
+    - M4A/MP4: Check for 'ftyp' box (valid MP4) + either 'styp/moof' (fragmented) 
+      OR just 'mdat' (progressive, still playable with ffmpeg -movflags +faststart)
+    """
+    if not path or not os.path.exists(path):
+        return False
+    
+    name = os.path.basename(path).lower()
     name = re.sub(r"\.part(?:[-._][a-z0-9_-]+)?$", "", name)
     for suffix in (".ytdl", ".temp", ".part"):
         while name.endswith(suffix):
             name = name[: -len(suffix)]
     ext = name.rsplit(".", 1)[-1] if "." in name else ""
     
+    # WebM/Opus/OGG/MP3/FLAC/WAV: Always early-playable
     if ext in _EARLY_AUDIO_STREAMABLE_EXTS:
         return True
-        
-    # ROOT-FIX: Allow early handoff ONLY for strictly fragmented mp4 (m4a/mp4).
-    # Progressive M4A has 'mdat' at the start but 'moov' at the EOF.
-    # ffprobe hangs waiting for EOF on growing progressive M4A, causing TimeoutError!
-    # Fragmented M4A has 'styp' or 'moof' boxes at the start, which ffprobe probes instantly.
-    if ext in {"m4a", "mp4"}:
+    
+    # M4A/MP4: Check for ftyp box (first box in ANY valid MP4)
+    if ext in {"m4a", "mp4", "m4v", "mov"}:
         try:
             with open(path, "rb") as f:
                 header = f.read(8192)
-            return b"styp" in header or b"moof" in header
+            # ftyp box is ALWAYS at bytes 4-8 in valid MP4 files
+            has_ftyp = len(header) >= 8 and header[4:8] == b"ftyp"
+            # Fragmented: styp or moof (best case - instant play)
+            is_fragmented = b"styp" in header or b"moof" in header
+            # Progressive: has ftyp + mdat (still playable with ffmpeg)
+            is_progressive = has_ftyp and b"mdat" in header
+            return has_ftyp and (is_fragmented or is_progressive)
         except Exception:
             return False
-            
-    return False
+    
+    # Fallback: trust file if >16KB
+    try:
+        return os.path.getsize(path) > 16384
+    except Exception:
+        return False
 
 
 def _complete_cache_files(video_id: str, tag: str) -> list:
