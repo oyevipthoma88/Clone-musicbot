@@ -1082,28 +1082,21 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
                 "headers": {},
             }
         else:
-            # ⚡ SPEED FIX: Simplified retry logic - try cache first, then force retry
+            # SPEED FIX: Try resolve once. If it fails, it caches the failure for 60s.
+            # Retrying immediately with force=True would walk the ladder again, taking
+            # another 1.5-5s and exceeding the 5-10s strict startup limit.
+            # Fall back to the download immediately, which now supports early handoff
+            # for m4a/mp4 (fMP4) and starts playing in <2 seconds!
             try:
                 urls = await resolve_stream_urls(
                     track.video_id, want_video=video, force=False,
                 )
             except Exception as cached_exc:
-                # First attempt failed - retry with force=True to bypass negative cache
                 LOGGER.info(
-                    "#stream direct source failed for %s (%s) — retrying with force=True",
+                    "#stream direct source unavailable for %s (%s) — using download fallback",
                     track.video_id, type(cached_exc).__name__,
                 )
-                try:
-                    urls = await resolve_stream_urls(
-                        track.video_id, want_video=video, force=True,
-                    )
-                except Exception as retry_exc:
-                    # Both attempts failed - fall back to download
-                    LOGGER.info(
-                        "#stream direct source unavailable for %s after retry (%s) — using download fallback",
-                        track.video_id, type(retry_exc).__name__,
-                    )
-                    return None
+                return None
     except Exception as exc:
         # Resolver-level failures (403, empty formats, expired profile, or a
         # stale signed URL) happen before PyTgCalls can perform its probe. Give

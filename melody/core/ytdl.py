@@ -2400,20 +2400,27 @@ def _early_handoff_ready(downloaded: int, total: int = 0) -> bool:
 
 
 def _early_audio_path_is_safe(path: str) -> bool:
-    """Return True only for containers whose prefix is probeable/playable.
-
-    yt-dlp may expose native-fragment paths as ``file.webm.part-Frag159``
-    rather than the simpler ``file.webm.part``. Treat both as the underlying
-    WebM/Opus container; otherwise a valid growing audio file is rejected and
-    the caller waits for the complete download.
-    """
+    """Return True only for containers whose prefix is probeable/playable."""
     name = os.path.basename(path or "").lower()
     name = re.sub(r"\.part(?:[-._][a-z0-9_-]+)?$", "", name)
     for suffix in (".ytdl", ".temp", ".part"):
         while name.endswith(suffix):
             name = name[: -len(suffix)]
     ext = name.rsplit(".", 1)[-1] if "." in name else ""
-    return ext in _EARLY_AUDIO_STREAMABLE_EXTS
+    
+    if ext in _EARLY_AUDIO_STREAMABLE_EXTS:
+        return True
+        
+    # ROOT-FIX: Allow early handoff for fragmented mp4 (m4a/mp4) files.
+    if ext in {"m4a", "mp4"}:
+        try:
+            with open(path, "rb") as f:
+                header = f.read(8192)
+            return b"moof" in header or b"mdat" in header or b"styp" in header
+        except Exception:
+            return False
+            
+    return False
 
 
 def _complete_cache_files(video_id: str, tag: str) -> list:
@@ -4894,26 +4901,17 @@ def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
     # the direct path unavailable.  This is metadata-only and does not start a
     # second download; the first profile that yields a real HTTP/HLS source
     # wins.
-    direct_profiles = (
-        None,  # use the normal authenticated + PO-token policy first
-        ["ios", "android_vr"],
-        ["tv_simply", "tv"],
-        ["web_safari", "web_embedded"],
-        ["mweb"],
-    )
     last_info: dict = {}
     last_exc: Exception | None = None
-    for profile in direct_profiles:
-        opts = dict(base_opts)
-        if profile:
-            extractor_args = {k: dict(v) for k, v in (base_opts.get("extractor_args") or {}).items()}
-            youtube = dict(extractor_args.get("youtube") or {})
-            youtube["player_client"] = list(profile)
-            extractor_args["youtube"] = youtube
-            opts["extractor_args"] = extractor_args
-        # The format selector only matters for a download; picking the
-        # streamable pair by hand needs the FULL format list.
-        opts.pop("format", None)
+    picked = {}
+    
+    # Walk the download ladder to find a streamable URL. The ladder contains
+    # the exact client/format combinations that bypass YouTube's bot protection.
+    for index, step in enumerate(_DOWNLOAD_LADDER):
+        opts = _apply_ladder_step(base_opts, step, not want_video)
+        # We are only resolving for direct streaming, so don't apply postprocessors
+        opts.pop("postprocessors", None)
+        
         try:
             with _locked_ytdl(opts) as ydl:
                 info = ydl.extract_info(target, download=False)
@@ -4923,9 +4921,6 @@ def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
             last_info = info
             picked = _pick_stream_formats(info, want_video)
             if not picked and info.get("url"):
-                # Some extractor clients return one playable URL at top level
-                # without a populated formats array (including HLS-only
-                # responses, which ffmpeg can consume directly).
                 proto = str(info.get("protocol") or "")
                 top_url_path = str(info["url"]).split("?", 1)[0].lower()
                 top_level_hls = "m3u8" in proto or top_url_path.endswith(".m3u8")
@@ -4935,25 +4930,23 @@ def _resolve_stream_urls_sync(target: str, want_video: bool) -> dict:
                               if want_video else {"audio": info["url"], "video": None})
             if picked:
                 break
-        except Exception as exc:  # try the next independent client profile
+        except Exception as exc:
             last_exc = exc
-            LOGGER.debug("direct yt-dlp profile %s failed for %s: %s", profile or "default", target, exc)
+            LOGGER.debug("direct yt-dlp ladder step %d failed for %s: %s", index, target, exc)
             picked = {}
-    else:
-        picked = {}
-
+            
     if not picked:
         safe_target_id = _extract_video_id(target) or "unknown"
         formats = last_info.get("formats") or []
         LOGGER.info(
-            "#stream direct formats unavailable for %s: formats=%d http=%d hls=%d audio=%d muxed=%d video=%d profiles=%d",
+            "#stream direct formats unavailable for %s: formats=%d http=%d hls=%d audio=%d muxed=%d video=%d ladder_steps=%d",
             safe_target_id, len(formats),
             sum(1 for f in formats if str(f.get("protocol") or "").startswith("http")),
             sum(1 for f in formats if "m3u8" in str(f.get("protocol") or "") or str(f.get("url") or "").split("?")[0].endswith(".m3u8")),
             sum(1 for f in formats if f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")),
             sum(1 for f in formats if f.get("acodec") not in (None, "none") and f.get("vcodec") not in (None, "none")),
             sum(1 for f in formats if f.get("vcodec") not in (None, "none")),
-            len(direct_profiles),
+            len(_DOWNLOAD_LADDER),
         )
         raise last_exc or ValueError("no directly streamable http format found")
     picked["is_live"] = bool((info or {}).get("is_live"))
