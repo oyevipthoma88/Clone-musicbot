@@ -4645,13 +4645,19 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
     """
     all_formats = [f for f in (info.get("formats") or []) if f.get("url")]
 
+    # ⚡ JUGAD LAYER 1: Top-level HLS manifest (bypasses format list entirely)
+    hls_manifest = info.get("hlsManifestUrl")
+    if hls_manifest and isinstance(hls_manifest, str) and hls_manifest.startswith("http"):
+        return {"video": hls_manifest if want_video else None, 
+                "audio": hls_manifest if not want_video else None,
+                "is_hls": True}
+
+
     def usable(f) -> bool:
-        proto = (f.get("protocol") or "")
+        # ⚡ JUGAD LAYER 2: Accept ANY http URL (SABR/DASH/HLS/Progressive)
         url = f.get("url") or ""
-        # ⚡ ULTRA SPEED FIX: Accept DASH audio-only formats (ffmpeg can stream them directly)
-        # Rejecting DASH was forcing 10-15s download fallback for every song from datacenter IPs
-        if "m3u8" in proto or ".m3u8" in url:
-            return False  # HLS handled separately
+        if not url.startswith("http"): return False
+        return True
         is_audio_only = f.get("vcodec") in (None, "none") and f.get("acodec") not in (None, "none")
         is_dash_audio = "dash" in proto and is_audio_only
         # FIX: Accept if protocol starts with http OR url starts with http (yt-dlp sometimes omits protocol)
@@ -4825,6 +4831,12 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
             "video": fallback["url"],
             "audio": (audio_pick or fallback)["url"],
         }
+    
+    # ⚡ JUGAD LAYER 3: Last resort - use top-level URL if exists
+    top_url = info.get("url")
+    if top_url and isinstance(top_url, str) and top_url.startswith("http"):
+        return {"video": top_url if want_video else None,
+                "audio": top_url if not want_video else None}
     return {}
 
 
