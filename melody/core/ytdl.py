@@ -2335,7 +2335,7 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # PyTgCalls quickly even on a busy 1-CPU dyno.
 _EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 16_000)
 # Minimum share of the total file that must be on disk before handing off.
-_EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.01)
+_EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.001)
 # BUG FIX ("3 ghante ki movie download hone tak wait karta hai"): the ratio
 # above is only sane for small files. A percentage of a multi-GB movie is
 # itself gigabytes — waiting for 35% of a 3 GB file means buffering ~1 GB
@@ -2345,7 +2345,7 @@ _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.01)
 # far faster than 1x realtime playback, so that prefix keeps growing well
 # ahead of the reader for the rest of a multi-hour file.
 _EARLY_HANDOFF_LARGE_FILE_BYTES = _env_int("EARLY_HANDOFF_LARGE_FILE_BYTES", 10_000_000)
-_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 32_000)  # ⚡ SPEED: 128KB→64KB
+_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 16_000)  # ⚡ SPEED: 128KB→64KB
 # ROOT-CAUSE FIX from the Aug 25 Heroku log:
 #   ffprobe check_stream failed (NoAudioSourceFound: No audio source found on
 #   "/tmp/melody_<id>_a.mp4.part")
