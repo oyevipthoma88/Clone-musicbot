@@ -1048,8 +1048,9 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     • concurrent_fragment_downloads=8 (SPEED FIX — see below).
     """
     fmt = (
-        "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/"
+        "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/"
         "bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/"
+        "bestaudio[ext=webm]/bestaudio[ext=opus]/"
         "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
         "bestaudio/best"
         if audio_only
@@ -1100,7 +1101,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # often than WEB/SABR on Heroku. Keep TV/iOS/Safari as fallbacks so a
         # client-specific block never removes playback entirely.
         # web_safari provides cloud-safe HLS; default/iOS remain fallbacks.
-        "player_client": ["android_vr", "ios", "android_music", "android", "tv_embedded", "mweb", "web_creator", "web", "web_safari"],
+        "player_client": ["ios", "android_music", "web_creator", "web", "web_safari", "mweb"],
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
         # listing are never used by playback but cost a round-trip each.
@@ -2332,7 +2333,7 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # lands on disk in well under a second.
 # 128 KB is a safe audio prefix (~8 seconds at 128 kbps) and reaches
 # PyTgCalls quickly even on a busy 1-CPU dyno.
-_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 32_000)  # SPEED: 60KB prefix is enough for WebM/Opus header+audio
+_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 16_000)  # SPEED: 60KB prefix is enough for WebM/Opus header+audio
 # Minimum share of the total file that must be on disk before handing off.
 _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.001)
 # BUG FIX ("3 ghante ki movie download hone tak wait karta hai"): the ratio
@@ -2518,9 +2519,9 @@ def is_download_in_progress(video_id: str, audio_only: bool = True) -> bool:
 # Each rung below changes exactly one thing, cheapest first.
 _DOWNLOAD_LADDER: tuple = (
     {},                                                        # as configured
-    {"concurrent_fragment_downloads": 1},                      # flaky CDN / partial fragments
+    {"concurrent_fragment_downloads": 8},                      # flaky CDN / partial fragments
     {"_client": ["android_vr", "web_safari"]},                 # different API surface
-    {"_client": ["ios", "mweb"], "concurrent_fragment_downloads": 1},
+    {"_client": ["ios", "mweb"], "concurrent_fragment_downloads": 8},
     {"_format": "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/bestaudio/best", "_client": ["tv", "web"]},   # format vanished
     # Last rung — never merge, never post-process. Fixes the recurring
     # "_stream_track failed ... YoutubeDL.post_process → run_all_pps"
@@ -2535,7 +2536,7 @@ _DOWNLOAD_LADDER: tuple = (
     # protocol-restricted (https-only, no SABR/HLS manifest) format keeps the
     # native downloader on a URL that actually returns bytes.
     {"_client": ["tv_simply", "tv"], "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/bestaudio[protocol^=http]/bestaudio/best",
-     "concurrent_fragment_downloads": 1, "_no_merge": True},
+     "concurrent_fragment_downloads": 8, "_no_merge": True},
     {"_client": ["web_safari", "web_embedded"],
      "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/bestaudio[protocol^=http]/bestaudio/best", "_no_merge": True},
 )
