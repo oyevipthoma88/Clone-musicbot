@@ -84,7 +84,7 @@ _DIRECT_VIDEO_STREAM = os.getenv("DIRECT_VIDEO_STREAM", "true").strip().lower() 
 # consume the entire request budget and turn a valid track into a false crash.
 # Override with PLAY_PROBE_TIMEOUT / PLAY_STARTUP_DEADLINE for a specific region.
 try:
-    _PLAY_PROBE_TIMEOUT = max(0.8, float(os.getenv("PLAY_PROBE_TIMEOUT", "15.0")))
+    _PLAY_PROBE_TIMEOUT = max(0.8, float(os.getenv("PLAY_PROBE_TIMEOUT", "20.0")))
 except Exception:
     _PLAY_PROBE_TIMEOUT = 2.5
 try:
@@ -92,7 +92,7 @@ try:
     # ffprobe could both be healthy yet _stream_track raised at line 1775.
     # Keep this bounded so a dead source still fails predictably.
     _STARTUP_DEADLINE = min(
-        90.0, max(10.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "60.0")))
+        120.0, max(15.0, float(os.getenv("PLAY_STARTUP_DEADLINE", "90.0")))
     )
 except Exception:  # noqa: BLE001
     _STARTUP_DEADLINE = 8.5
@@ -1052,7 +1052,7 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
     "pura video download mt Krna direct play Krna" + "play/vplay krte hi
     direct VC aake gana baje"):
 
-    The old path always went through download_audio(). For /vplay that meant
+    The old path always went through download_audio(, allow_early=True). For /vplay that meant
     PyTgCalls got a still-growing `.part` file, and a video MediaStream opens
     that path TWICE — once for the camera ffmpeg, once for the microphone
     ffmpeg. Each process opened the file at a different length (and, on a DASH
@@ -2014,7 +2014,7 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 # ProcessLookupError instead of anything actionable. Download the
                 # track and play the local file instead of failing the request.
                 # A local Telegram range proxy is the source of truth for a
-                # tagged large file. Recreating it via download_audio() after a
+                # tagged large file. Recreating it via download_audio(, allow_early=True) after a
                 # probe timeout creates a second proxy entry and can race the first
                 # stream. Fail this attempt cleanly instead; the longer local-only
                 # budget above handles normal ffprobe startup latency.
@@ -2044,7 +2044,7 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                         ) from play_exc
                     # The range proxy failed (chunk timeouts on huge files).
                     # Fall back to a direct file download instead of dead-ending
-                    # playback. download_audio() for a synthetic tg<…> id will
+                    # playback. download_audio(, allow_early=True) for a synthetic tg<…> id will
                     # re-fetch the Telegram message and save it to /tmp.
                     try:
                         fallback_path = await asyncio.wait_for(
