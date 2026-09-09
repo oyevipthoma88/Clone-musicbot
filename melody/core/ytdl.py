@@ -2337,7 +2337,7 @@ def _env_flag(name: str, default: bool = True) -> bool:
 # lands on disk in well under a second.
 # 128 KB is a safe audio prefix (~8 seconds at 128 kbps) and reaches
 # PyTgCalls quickly even on a busy 1-CPU dyno.
-_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 16_000)
+_EARLY_HANDOFF_BYTES = _env_int("EARLY_HANDOFF_BYTES", 60_000)  # SPEED: 60KB prefix is enough for WebM/Opus header+audio
 # Minimum share of the total file that must be on disk before handing off.
 _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.001)
 # BUG FIX ("3 ghante ki movie download hone tak wait karta hai"): the ratio
@@ -2349,7 +2349,7 @@ _EARLY_HANDOFF_RATIO = _env_float("EARLY_HANDOFF_RATIO", 0.001)
 # far faster than 1x realtime playback, so that prefix keeps growing well
 # ahead of the reader for the rest of a multi-hour file.
 _EARLY_HANDOFF_LARGE_FILE_BYTES = _env_int("EARLY_HANDOFF_LARGE_FILE_BYTES", 10_000_000)
-_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 16_000)  # ⚡ SPEED: 128KB→64KB
+_EARLY_HANDOFF_LARGE_FILE_PREFIX = _env_int("EARLY_HANDOFF_LARGE_FILE_PREFIX", 80_000)  # SPEED: 80KB prefix
 # ROOT-CAUSE FIX from the Aug 25 Heroku log:
 #   ffprobe check_stream failed (NoAudioSourceFound: No audio source found on
 #   "/tmp/melody_<id>_a.mp4.part")
@@ -2374,7 +2374,7 @@ _EARLY_HANDOFF_ENABLED = _env_flag("EARLY_HANDOFF", True)  # ⚡ 5-SEC FIX: Enab
 _EARLY_AUDIO_HANDOFF_ENABLED = _env_flag(
     "EARLY_AUDIO_HANDOFF", True
 )
-_EARLY_AUDIO_STREAMABLE_EXTS = {"webm", "ogg", "oga", "opus", "mp3", "flac", "wav"}
+_EARLY_AUDIO_STREAMABLE_EXTS = {"webm", "ogg", "oga", "opus", "mp3", "flac", "wav", "mka"}
 
 
 def _early_handoff_allowed(audio_only: bool) -> bool:
