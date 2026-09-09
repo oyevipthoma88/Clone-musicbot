@@ -1045,11 +1045,11 @@ def _ydl_opts(audio_only: bool = True) -> dict:
       AAC/M4A requires the moov atom at end-of-file → breaks pipe mode.
     • geo_bypass — Heroku USA servers sometimes hit geo-restricted content;
       bypass declaration helps with most non-DRM videos.
-    • concurrent_fragment_downloads=4 (SPEED FIX — see below).
+    • concurrent_fragment_downloads=8 (SPEED FIX — see below).
     """
     fmt = (
         "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
-        f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 96)}]/"
+        f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 64)}]/"
         "bestaudio[ext=webm]/"
         "bestaudio[ext=opus]/bestaudio[abr<=128]/"
         "bestaudio[ext=ogg]/bestaudio[abr<=128]/best"
@@ -1171,7 +1171,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # up to 8 retries per rung before the ladder even moved on — that is
         # the "kabhi kabhi _stream_track failed" case taking 20s+ first.
         "socket_timeout": _env_int("YT_SOCKET_TIMEOUT", 5),
-        "retries": _env_int("YT_RETRIES", 1),
+        "retries": _env_int("YT_RETRIES", 2),
         "fragment_retries": _env_int("YT_FRAGMENT_RETRIES", 2),
         "extractor_retries": _env_int("YT_EXTRACTOR_RETRIES", 1),
         "file_access_retries": 3,
