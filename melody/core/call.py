@@ -1108,7 +1108,7 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
             ("http://127.0.0.1:", "http://localhost:")
         ):
             try:
-                if os.getenv('DISABLE_DIRECT_STREAM', '1') == '1':
+                if os.getenv('DISABLE_DIRECT_STREAM', '0') == '1':
                     raise ValueError('FastPlay: skip direct stream')
                 return await _build_direct_stream(
                     chat_id, track, video, seconds, force=True,
