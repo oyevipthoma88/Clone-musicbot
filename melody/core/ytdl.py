@@ -41,12 +41,12 @@ from melody.core.pools import YTDL_POOL
 # Keep the budget configurable, but give the authenticated fallback enough time
 # to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "2.5"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "1.5"))
 except ValueError:
     _RESOLVE_TIMEOUT = 4.5
 # Keep the existing operator override, but prevent a cold direct resolver from
 # consuming the whole playback latency budget before the parallel fallback wins.
-_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "2.5")))
+_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "1.5")))
 _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
@@ -62,7 +62,7 @@ except Exception:  # noqa: BLE001
 # _get_video_info_once() for why sequential fallback used to cost 5-10s even
 # with cookies/API keys configured.
 try:
-    _FAST_TIMEOUT = float(os.getenv("FAST_RESOLVE_TIMEOUT", "1.0"))
+    _FAST_TIMEOUT = float(os.getenv("FAST_RESOLVE_TIMEOUT", "0.8"))
 except ValueError:
     _FAST_TIMEOUT = 1.0
 
@@ -1049,7 +1049,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     """
     fmt = (
         "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
-        f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 64)}]/"
+        f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 48)}]/"
         "bestaudio[ext=webm]/"
         "bestaudio[ext=opus]/bestaudio[abr<=128]/"
         "bestaudio[ext=ogg]/bestaudio[abr<=128]/best"
@@ -2470,7 +2470,7 @@ def on_cloud_host() -> bool:
     return _ON_CLOUD_HOST
 # Hard ceiling on how long we wait for that early-handoff threshold before
 # giving up and blocking on the full download instead (pure fallback).
-_EARLY_HANDOFF_TIMEOUT = _env_float("EARLY_HANDOFF_TIMEOUT", 3.0)
+_EARLY_HANDOFF_TIMEOUT = _env_float("EARLY_HANDOFF_TIMEOUT", 2.0)
 # SPEED FIX ("gana 20 sec baad bajta hai"): the timeout above used to be a
 # HARD cutoff — miss it by a fraction of a second (very common, because yt-dlp
 # spends the first seconds only resolving metadata, before a single byte is
