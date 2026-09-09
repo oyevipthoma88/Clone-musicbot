@@ -1070,10 +1070,6 @@ async def _build_direct_stream(chat_id: int, track, video: bool, seconds: int = 
     """
     try:
         from melody.core.ytdl import resolve_stream_urls
-        # SPEED-JUGAD: Direct CDN stream keeps failing (ValueError) on this host
-        # and burns ~2s before falling back anyway. Skip it entirely -> download fast-path.
-        if os.getenv("FORCE_DOWNLOAD_FIRST", "1") == "1":
-            raise ValueError("forced download-first fast path")
 
         proxy_url = getattr(track, "stream_url", "") or ""
         if proxy_url.startswith(("http://127.0.0.1:", "http://localhost:")):
