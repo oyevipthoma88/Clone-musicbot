@@ -32,7 +32,7 @@ import zipfile
 
 # SPEED FIX: dedicated pools — see melody/core/pools.py for why the default
 # executor was the real cause of the 10-15s wait before playback started.
-from melody.core.pools import YTDL_POOL
+from melody.core.pools import YTDL_POOL, NET_POOL
 
 # Direct URL extraction can need a few seconds on cloud hosts while the
 # cookie-authenticated yt-dlp client waits for the warm PO-token provider. The
@@ -53,9 +53,9 @@ _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 # fallback is started as well (see resolve_stream_urls). The yt-dlp task then
 # remains alive until the absolute resolve deadline, even when InnerTube fails.
 try:
-    _INNERTUBE_HEADSTART = float(os.getenv("INNERTUBE_HEADSTART", "0.10"))
+    _INNERTUBE_HEADSTART = float(os.getenv("INNERTUBE_HEADSTART", "1.50"))
 except Exception:  # noqa: BLE001
-    _INNERTUBE_HEADSTART = 0.10
+    _INNERTUBE_HEADSTART = 1.50
 
 # How long the fast metadata race (YouTube Data API v3 + InnerTube) is given
 # before falling back to yt-dlp. Kept short on purpose — see
@@ -4293,12 +4293,26 @@ def _innertube_streams_sync(video_id: str) -> "dict | None":
     if not _CLIENTS:
         return None
     deadline = time.monotonic() + _INNERTUBE_TIMEOUT + 0.5
-    # Reuse the bounded process-wide pool. Creating a fresh executor for every
-    # resolve left losing client probes running after the winner returned; a
-    # busy bot accumulated those threads and could cross Heroku R14 even with
-    # only one yt-dlp download slot. The shared pool also caps InnerTube fan-out
-    # together with search/resolve work.
-    futures = {YTDL_POOL.submit(_probe, entry): entry[0] for entry in _CLIENTS}
+    # ⚡ SPEED ROOT FIX: probe the preferred client (IOS - the only one that
+    # still serves unciphered, PO-token-free CDN URLs) INLINE. This function
+    # already runs in a worker thread, so submitting the probes into the same
+    # 2-worker YTDL_POOL made them queue behind the yt-dlp extraction that is
+    # racing them -> every probe expired on its timeout and playback fell back
+    # to the 10s download. Inline first probe = ~0.2s to a playable URL.
+    try:
+        primary = _probe(_CLIENTS[0])
+    except Exception:  # noqa: BLE001
+        primary = None
+    if primary:
+        LOGGER.debug("InnerTube: %s served %s formats for %s (inline fast path)",
+                     primary["client"], len(primary["formats"]), video_id)
+        return primary
+    rest = _CLIENTS[1:]
+    if not rest:
+        return None
+    # Remaining clients fan out on the network-only pool, which is never
+    # occupied by yt-dlp/ffprobe work.
+    futures = {NET_POOL.submit(_probe, entry): entry[0] for entry in rest}
     try:
         try:
             for fut in as_completed(futures, timeout=max(0.1, deadline - time.monotonic())):
@@ -4686,23 +4700,12 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
     """
     all_formats = [f for f in (info.get("formats") or []) if f.get("url")]
 
-    # ⚡ ROOT FIX JUGAD: Top-level HLS manifest check (HIGHEST PRIORITY)
-    # Ye format filtering se PEHLE check hota hai, taaki hlsManifestUrl
-    # milne par turant return ho. fallback_audio bug bypass hota hai.
-    _hls_top = info.get("hlsManifestUrl")
-    if _hls_top and isinstance(_hls_top, str) and _hls_top.startswith("http"):
-        if want_video:
-            return {"video": _hls_top, "audio": None}
-        return {"video": None, "audio": _hls_top}
-
-
-    # ⚡ JUGAD LAYER 1: Top-level HLS manifest (bypasses format list entirely)
-    hls_manifest = info.get("hlsManifestUrl")
-    if hls_manifest and isinstance(hls_manifest, str) and hls_manifest.startswith("http"):
-        return {"video": hls_manifest if want_video else None, 
-                "audio": hls_manifest if not want_video else None,
-                "is_hls": True}
-
+    # SPEED FIX: the top-level HLS manifest used to be returned BEFORE the
+    # format list was even looked at. ffmpeg needs an extra manifest fetch +
+    # segment parse before the first sample, so a plain progressive/DASH audio
+    # URL (which InnerTube's IOS client always ships) starts noticeably
+    # sooner. HLS stays as the fallback further down, so nothing regresses
+    # for HLS-only/live responses.
 
     def usable(f) -> bool:
         # ⚡ JUGAD LAYER 2: Accept ANY http URL (SABR/DASH/HLS/Progressive)
@@ -4885,6 +4888,14 @@ def _pick_stream_formats(info: dict, want_video: bool) -> dict:
             "audio": (audio_pick or fallback)["url"],
         }
     
+    # HLS fallback for video (the early manifest return was removed above so
+    # audio playback can use the faster plain CDN URL).
+    _hls_video = info.get("hlsManifestUrl")
+    if want_video and _hls_video and str(_hls_video).startswith("http"):
+        return {"video": _hls_video, "audio": _hls_video}
+    if not want_video and _hls_video and str(_hls_video).startswith("http"):
+        return {"video": None, "audio": _hls_video}
+
     # ⚡ JUGAD LAYER 3: Last resort - use top-level URL if exists
     top_url = info.get("url")
     if top_url and isinstance(top_url, str) and top_url.startswith("http"):
@@ -5068,7 +5079,7 @@ async def resolve_stream_urls(
         it_task = None
         if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid_only or ""):
             it_task = asyncio.ensure_future(
-                loop.run_in_executor(YTDL_POOL, _resolve_stream_urls_innertube, vid_only, want_video)
+                loop.run_in_executor(NET_POOL, _resolve_stream_urls_innertube, vid_only, want_video)
             )
             tasks.append(it_task)
 
@@ -5095,7 +5106,7 @@ async def resolve_stream_urls(
         )
         tasks.append(ydl_task)
         invidious_task = asyncio.ensure_future(
-            loop.run_in_executor(YTDL_POOL, _resolve_stream_urls_invidious, vid_only, want_video)
+            loop.run_in_executor(NET_POOL, _resolve_stream_urls_invidious, vid_only, want_video)
         )
         tasks.append(invidious_task)
 
