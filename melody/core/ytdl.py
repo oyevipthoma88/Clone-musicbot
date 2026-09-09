@@ -41,21 +41,21 @@ from melody.core.pools import YTDL_POOL, NET_POOL
 # Keep the budget configurable, but give the authenticated fallback enough time
 # to win before accepting the much slower full-download path.
 try:
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "4.0"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "6.0"))
 except ValueError:
-    _RESOLVE_TIMEOUT = 4.5
+    _RESOLVE_TIMEOUT = 6.0
 # Keep the existing operator override, but prevent a cold direct resolver from
 # consuming the whole playback latency budget before the parallel fallback wins.
-_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "4.0")))
+_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "6.0")))
 _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
 # fallback is started as well (see resolve_stream_urls). The yt-dlp task then
 # remains alive until the absolute resolve deadline, even when InnerTube fails.
 try:
-    _INNERTUBE_HEADSTART = float(os.getenv("INNERTUBE_HEADSTART", "1.50"))
+    _INNERTUBE_HEADSTART = float(os.getenv("INNERTUBE_HEADSTART", "1.20"))
 except Exception:  # noqa: BLE001
-    _INNERTUBE_HEADSTART = 1.50
+    _INNERTUBE_HEADSTART = 1.20
 
 # How long the fast metadata race (YouTube Data API v3 + InnerTube) is given
 # before falling back to yt-dlp. Kept short on purpose — see
@@ -4098,14 +4098,17 @@ def _innertube_player_sync(video_id: str) -> "dict | None":
 # Per-client InnerTube timeout. Kept BELOW the overall resolve budget so a
 # single dead client can never push /play into the slow download fallback.
 try:
-    _INNERTUBE_TIMEOUT = float(os.getenv("INNERTUBE_TIMEOUT", "3"))
+    _INNERTUBE_TIMEOUT = float(os.getenv("INNERTUBE_TIMEOUT", "2.5"))
 except Exception:  # noqa: BLE001
-    _INNERTUBE_TIMEOUT = 3.0
+    _INNERTUBE_TIMEOUT = 2.5
 
 _CLIENT_IDS = {
     "IOS": "5", "IOS_MUSIC": "26", "ANDROID_VR": "28",
     "TVHTML5": "7", "MWEB": "2", "WEB": "1", "WEB_EMBEDDED_PLAYER": "56",
 }
+
+# Clients that only answer with playable formats when a PO token is attached.
+_POT_CLIENTS = ("ANDROID_VR", "TVHTML5", "MWEB", "WEB_EMBEDDED_PLAYER")
 
 
 def _innertube_cookie_header() -> str:
@@ -4125,6 +4128,102 @@ def _innertube_cookie_header() -> str:
         if len(parts) >= 7 and "youtube.com" in parts[0]:
             pairs.append(f"{parts[5]}={parts[6]}")
     return "; ".join(pairs)
+
+
+# ── PO token (bgutil) + visitorData for the InnerTube /player endpoint ──────
+# ROOT CAUSE of "gana 10-15 second baad bajta hai" on Heroku: from a datacenter
+# IP the PO-token-free InnerTube clients answer "Sign in to confirm you're not
+# a bot" (ANDROID_VR / TVHTML5) or LOGIN_REQUIRED, so the direct-CDN resolve
+# failed on every /play and playback always fell back to a FULL yt-dlp
+# download (8-12s to the first byte). The bot already runs a local bgutil
+# PO-token provider for yt-dlp — the token was simply never attached to our own
+# InnerTube probes. Attaching it (bound to visitorData) is what makes those
+# clients hand out plain, unciphered CDN URLs in ~0.3s.
+_POT_CACHE: "dict[str, tuple[float, str]]" = {}
+_POT_TTL = 3600.0
+_VISITOR_CACHE: "list" = []
+_VISITOR_TTL = 3600.0
+
+
+def _innertube_visitor_data() -> str:
+    """Cached visitorData string (empty when it cannot be fetched)."""
+    import json as _json
+    now = time.monotonic()
+    if _VISITOR_CACHE and _VISITOR_CACHE[0] > now:
+        return _VISITOR_CACHE[1]
+    try:
+        body = {"context": {"client": {
+            "clientName": "WEB", "clientVersion": "2.20250605.01.00",
+            "hl": "en", "gl": "US",
+        }}}
+        resp = get_http_sync_client().post(
+            "https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false",
+            content=_json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json",
+                     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
+                                   " (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                     "Origin": "https://www.youtube.com"},
+            timeout=2.0,
+        )
+        data = _json.loads(resp.text) if resp.status_code == 200 else {}
+        vd = ((data.get("responseContext") or {}).get("visitorData") or "")
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug("visitorData fetch failed: %s", exc)
+        vd = ""
+    _VISITOR_CACHE[:] = [now + _VISITOR_TTL, vd]
+    return vd
+
+
+def _bgutil_pot(binding: str) -> str:
+    """Fetch a PO token for `binding` from the local bgutil HTTP provider.
+
+    Returns "" when the provider is not up — callers must stay functional
+    without a token (the IOS client does not need one).
+    """
+    import json as _json
+    if not binding:
+        return ""
+    now = time.monotonic()
+    hit = _POT_CACHE.get(binding)
+    if hit and hit[0] > now:
+        return hit[1]
+    token = ""
+    try:
+        resp = get_http_sync_client().post(
+            f"http://127.0.0.1:{_BGUTIL_HTTP_PORT}/get_pot",
+            content=_json.dumps({"content_binding": binding}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            timeout=2.5,
+        )
+        if resp.status_code == 200:
+            token = (_json.loads(resp.text) or {}).get("po_token") or \
+                    (_json.loads(resp.text) or {}).get("poToken") or ""
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug("bgutil PO token fetch failed: %s", exc)
+    if token:
+        _POT_CACHE[binding] = (now + _POT_TTL, token)
+        if len(_POT_CACHE) > 128:
+            for k in list(_POT_CACHE)[:64]:
+                _POT_CACHE.pop(k, None)
+    return token
+
+
+def _url_playable(url: str, headers: dict | None = None, timeout: float = 1.2) -> bool:
+    """Cheap 2-byte ranged GET so a 403/expired CDN URL is never handed to
+    ffmpeg. A dead URL used to surface as "recovered mid-track EOF" seconds
+    into the song instead of failing over instantly."""
+    if not url or not url.startswith("http"):
+        return False
+    if url.startswith(("http://127.0.0.1:", "http://localhost:")):
+        return True
+    try:
+        h = dict(headers or {})
+        h["Range"] = "bytes=0-1"
+        resp = get_http_sync_client().get(url, headers=h, timeout=timeout)
+        return resp.status_code in (200, 206)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug("stream URL health check failed: %s", exc)
+        return False
 
 
 def _innertube_streams_sync(video_id: str) -> "dict | None":
@@ -4184,7 +4283,10 @@ def _innertube_streams_sync(video_id: str) -> "dict | None":
 
     _WEB_FAMILY = ("TVHTML5", "MWEB", "WEB", "WEB_EMBEDDED_PLAYER")
     cookie_header = _innertube_cookie_header()
-    if not cookie_header:
+    # Web-family clients are useful when EITHER a real session cookie or a
+    # local PO-token provider is available; before this fix they were dropped
+    # whenever cookies were missing, even with bgutil running.
+    if not cookie_header and not _bgutil_http_alive():
         _CLIENTS = [c for c in _CLIENTS if c[0] not in _WEB_FAMILY]
 
     def _probe(entry):
@@ -4199,11 +4301,23 @@ def _innertube_streams_sync(video_id: str) -> "dict | None":
         }
         if client_name.startswith("TVHTML5") or client_name == "WEB_EMBEDDED_PLAYER":
             body["context"]["thirdParty"] = {"embedUrl": "https://www.youtube.com/"}
+        # Clients that YouTube gates behind "Sign in to confirm you're not a
+        # bot" on cloud IPs are unlocked by a PO token bound to visitorData.
+        visitor = ""
+        if client_name in _POT_CLIENTS:
+            visitor = _innertube_visitor_data()
+            if visitor:
+                ctx["visitorData"] = visitor
+                token = _bgutil_pot(visitor)
+                if token:
+                    body["serviceIntegrityDimensions"] = {"poToken": token}
         payload = json.dumps(body).encode("utf-8")
         headers = {"Content-Type": "application/json", "User-Agent": ua,
                    "X-Youtube-Client-Name": _CLIENT_IDS.get(client_name, "1"),
                    "X-Youtube-Client-Version": client_ver,
                    "Origin": "https://www.youtube.com"}
+        if visitor:
+            headers["X-Goog-Visitor-Id"] = visitor
         # Cookies only help (and are only accepted) for the web-family
         # clients; sending a web session to the IOS client makes YouTube
         # answer LOGIN_REQUIRED instead of streaming formats.
@@ -4228,7 +4342,13 @@ def _innertube_streams_sync(video_id: str) -> "dict | None":
 
         status = ((data.get("playabilityStatus") or {}).get("status") or "").upper()
         if status not in ("OK", "LIVE_STREAM_OFFLINE"):
-            LOGGER.debug("InnerTube %s for %s -> %s", client_name, video_id, status or "?")
+            # INFO, not DEBUG: this single line is what tells an operator why
+            # /play fell back to the slow download on their host.
+            LOGGER.info(
+                "#stream innertube %s blocked for %s -> %s (%s)",
+                client_name, video_id, status or "?",
+                ((data.get("playabilityStatus") or {}).get("reason") or "")[:60],
+            )
             return None
 
         sd = data.get("streamingData") or {}
@@ -4355,6 +4475,11 @@ def _resolve_stream_urls_innertube(video_id: str, want_video: bool) -> dict:
     }
     urls = [u for u in (picked.get("video"), picked.get("audio")) if u]
     picked["expires_at"] = min(_url_expiry(u) for u in urls) - _STREAM_URL_SAFETY_MARGIN
+    # Never hand ffmpeg a URL the CDN will reject: a 403 only surfaced as
+    # "recovered mid-track EOF" several seconds into the song. One 2-byte
+    # ranged GET (~50ms, warm pool) is far cheaper than that failure.
+    if not _url_playable(picked.get("audio"), picked.get("headers")):
+        raise ValueError("innertube: picked audio URL not playable")
     return picked
 
 
