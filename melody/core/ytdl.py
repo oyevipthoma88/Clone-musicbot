@@ -53,9 +53,51 @@ _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 # fallback is started as well (see resolve_stream_urls). The yt-dlp task then
 # remains alive until the absolute resolve deadline, even when InnerTube fails.
 try:
-    _INNERTUBE_HEADSTART = float(os.getenv("INNERTUBE_HEADSTART", "1.20"))
+    _INNERTUBE_HEADSTART = float(os.getenv("INNERTUBE_HEADSTART", "0.60"))
 except Exception:  # noqa: BLE001
-    _INNERTUBE_HEADSTART = 1.20
+    _INNERTUBE_HEADSTART = 0.60
+
+# ── InnerTube direct-stream circuit breaker ─────────────────────────────
+# On most cloud IPs (Heroku included) EVERY InnerTube player client answers
+# LOGIN_REQUIRED / "Sign in to confirm you're not a bot", even with a warm
+# bgutil PO token. Probing all five clients on every /play then costs ~1s of
+# pure dead time on the critical path before the cookie-authenticated yt-dlp
+# resolve — which is the source that actually works there — is even started.
+# After a couple of all-blocked resolves we mute the InnerTube stream probe
+# for a while and go straight to yt-dlp, then re-test once the TTL expires.
+try:
+    _IT_MUTE_AFTER = max(1, int(os.getenv("INNERTUBE_MUTE_AFTER", "2")))
+except Exception:  # noqa: BLE001
+    _IT_MUTE_AFTER = 2
+try:
+    _IT_MUTE_TTL = max(60.0, float(os.getenv("INNERTUBE_MUTE_TTL", "900")))
+except Exception:  # noqa: BLE001
+    _IT_MUTE_TTL = 900.0
+_it_stream_fail_streak = 0
+_it_stream_muted_until = 0.0
+
+
+def _innertube_stream_muted() -> bool:
+    return _it_stream_muted_until > _time_mod.monotonic()
+
+
+def _note_innertube_stream(ok: bool) -> None:
+    """Track consecutive InnerTube direct-stream failures (host-level)."""
+    global _it_stream_fail_streak, _it_stream_muted_until
+    if ok:
+        if _it_stream_muted_until or _it_stream_fail_streak:
+            LOGGER.info("#stream innertube direct path healthy again — re-enabled")
+        _it_stream_fail_streak = 0
+        _it_stream_muted_until = 0.0
+        return
+    _it_stream_fail_streak += 1
+    if _it_stream_fail_streak >= _IT_MUTE_AFTER and not _innertube_stream_muted():
+        _it_stream_muted_until = _time_mod.monotonic() + _IT_MUTE_TTL
+        LOGGER.info(
+            "#stream innertube blocked on this host (%d/%d) — skipping direct "
+            "InnerTube probes for %.0fs, using cookie yt-dlp first",
+            _it_stream_fail_streak, _IT_MUTE_AFTER, _IT_MUTE_TTL,
+        )
 
 # How long the fast metadata race (YouTube Data API v3 + InnerTube) is given
 # before falling back to yt-dlp. Kept short on purpose — see
@@ -4462,6 +4504,7 @@ def _resolve_stream_urls_innertube(video_id: str, want_video: bool) -> dict:
     info = _innertube_streams_sync(video_id)
     picked = _pick_stream_formats(info or {}, want_video)
     if not picked:
+        _note_innertube_stream(False)
         raise ValueError("innertube: no directly streamable format")
     picked["is_live"] = bool((info or {}).get("is_live"))
     picked["headers"] = {
@@ -4479,7 +4522,9 @@ def _resolve_stream_urls_innertube(video_id: str, want_video: bool) -> dict:
     # "recovered mid-track EOF" several seconds into the song. One 2-byte
     # ranged GET (~50ms, warm pool) is far cheaper than that failure.
     if not _url_playable(picked.get("audio"), picked.get("headers")):
+        _note_innertube_stream(False)
         raise ValueError("innertube: picked audio URL not playable")
+    _note_innertube_stream(True)
     return picked
 
 
@@ -5202,7 +5247,7 @@ async def resolve_stream_urls(
         # latency was coming from.
         tasks = []
         it_task = None
-        if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid_only or ""):
+        if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid_only or "") and not _innertube_stream_muted():
             it_task = asyncio.ensure_future(
                 loop.run_in_executor(NET_POOL, _resolve_stream_urls_innertube, vid_only, want_video)
             )
