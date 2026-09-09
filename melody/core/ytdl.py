@@ -1049,9 +1049,10 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     """
     fmt = (
         "bestaudio[protocol=m3u8]/bestaudio[protocol=m3u8_native]/"
-        "bestaudio[ext=webm]/bestaudio[ext=opus]/"
-        "bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/"
-        "bestaudio/best"
+        f"bestaudio[ext=webm][abr<={_env_int('YT_AUDIO_MAX_ABR', 48)}]/"
+        "bestaudio[ext=webm]/"
+        "bestaudio[ext=opus]/bestaudio[abr<=128]/"
+        "bestaudio[ext=ogg]/bestaudio[abr<=128]/best"
         if audio_only
         else (
             f"bestvideo[height<={_env_int('VIDEO_MAX_HEIGHT', _max_stream_height())}][vcodec^=avc1]"
@@ -1100,7 +1101,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # often than WEB/SABR on Heroku. Keep TV/iOS/Safari as fallbacks so a
         # client-specific block never removes playback entirely.
         # web_safari provides cloud-safe HLS; default/iOS remain fallbacks.
-        "player_client": ["tv_embedded", "android_music", "ios", "web_creator", "web"],
+        "player_client": ["web_safari", "android_vr", "default", "ios"],
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
         # listing are never used by playback but cost a round-trip each.
@@ -1170,8 +1171,8 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # up to 8 retries per rung before the ladder even moved on — that is
         # the "kabhi kabhi _stream_track failed" case taking 20s+ first.
         "socket_timeout": _env_int("YT_SOCKET_TIMEOUT", 5),
-        "retries": _env_int("YT_RETRIES", 1),
-        "fragment_retries": _env_int("YT_FRAGMENT_RETRIES", 1),
+        "retries": _env_int("YT_RETRIES", 2),
+        "fragment_retries": _env_int("YT_FRAGMENT_RETRIES", 2),
         "extractor_retries": _env_int("YT_EXTRACTOR_RETRIES", 1),
         "file_access_retries": 3,
         # ROOT-CAUSE FIX (⚠️ "prefetch_next failed" →
@@ -1216,8 +1217,6 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # Merging only kicks in for the bestvideo+bestaudio fallback above;
         # it guarantees ONE file with both tracks instead of two siblings.
         "merge_output_format": "mp4",
-        # BYPASS 403: Use curl_cffi to spoof Chrome TLS fingerprint
-        "impersonate": "chrome",
         "http_headers": {
             "User-Agent": user_agent,
             "Referer": "https://www.youtube.com/",
@@ -2536,9 +2535,15 @@ def is_download_in_progress(video_id: str, audio_only: bool = True) -> bool:
 # Each rung below changes exactly one thing, cheapest first.
 _DOWNLOAD_LADDER: tuple = (
     {},                                                        # as configured
-    {"concurrent_fragment_downloads": 8},                      # flaky CDN / partial fragments
-    # TRUNCATED: Removed 6 more rungs. If the first 2 fail with 403,
-    # the IP is blocked and retrying 8 times wastes 16 seconds.
+    {"concurrent_fragment_downloads": 1},                      # flaky CDN / partial fragments
+    {"_client": ["android_vr", "web_safari"]},                 # different API surface
+    {"_client": ["ios", "mweb"], "concurrent_fragment_downloads": 1},
+    {"_format": "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/bestaudio/best", "_client": ["tv", "web"]},   # format vanished
+    {"_format": "bestaudio[ext=webm]/bestaudio[ext=opus]/bestaudio[ext=ogg]/bestaudio/best", "_no_merge": True},
+    {"_client": ["tv_simply", "tv"], "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/bestaudio[protocol^=http]/bestaudio/best",
+     "concurrent_fragment_downloads": 1, "_no_merge": True},
+    {"_client": ["web_safari", "web_embedded"],
+     "_format": "bestaudio[ext=webm][protocol^=http]/bestaudio[ext=opus][protocol^=http]/bestaudio[ext=ogg][protocol^=http]/bestaudio[ext=m4a][protocol*=dash]/bestaudio[format_id=140]/bestaudio[protocol^=http]/bestaudio/best", "_no_merge": True},
 )
 
 
