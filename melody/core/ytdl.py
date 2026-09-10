@@ -4150,7 +4150,7 @@ _CLIENT_IDS = {
 }
 
 # Clients that only answer with playable formats when a PO token is attached.
-_POT_CLIENTS = ("ANDROID_VR", "TVHTML5", "MWEB", "WEB_EMBEDDED_PLAYER")
+_POT_CLIENTS = ("ANDROID_VR", "TVHTML5", "MWEB", "WEB_EMBEDDED_PLAYER", "WEB", "IOS")
 
 
 def _innertube_cookie_header() -> str:
@@ -4320,6 +4320,14 @@ def _innertube_streams_sync(video_id: str) -> "dict | None":
         ("MWEB", "2.20250605.01.00",
          "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 "
          "(KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36",
+         {}),
+        ("WEB", "2.20260801.00.00",
+         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+         "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+         {}),
+        ("WEB_EMBEDDED_PLAYER", "1.20260801.00.00",
+         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+         "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
          {}),
     ]
 

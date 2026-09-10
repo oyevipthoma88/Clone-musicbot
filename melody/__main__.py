@@ -356,7 +356,7 @@ async def register_slash_commands(bot):
         private_commands = []
 
     try:
-        await bot.set_bot_commands(group_commands, scope=BotCommandScopeAllGroupChats())
+        await bot.set_bot_commands(group_commands[:100], scope=BotCommandScopeAllGroupChats())
         await bot.set_bot_commands(private_commands, scope=BotCommandScopeAllPrivateChats())
         if Config.OWNER_ID:
             await bot.set_bot_commands(

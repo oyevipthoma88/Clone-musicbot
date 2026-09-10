@@ -28,7 +28,7 @@ try:
 except Exception:  # database not configured
     _assets_col = None
 
-_ASSET_DB_TIMEOUT = 8.0
+_ASSET_DB_TIMEOUT = 20.0
 
 
 def _enabled() -> bool:
