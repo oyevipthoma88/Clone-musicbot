@@ -1,5 +1,5 @@
 """
-🛰 VC session commands — parity with Yukki / AnonXMusic / VIPMusic.
+🛰 VC session commands — Apex Vibes voice-chat session controls.
 
 Missing before this module:
 

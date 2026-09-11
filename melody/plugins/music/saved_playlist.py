@@ -1,5 +1,5 @@
 """
-💾 Personal saved playlists — parity with Yukki / AnonXMusic / VIPMusic.
+💾 Personal saved playlists — Apex Vibes personal playlist storage.
 
 Top music bots let every user keep a private playlist that survives restarts
 and can be queued in any group. Apex Vibes had only `/playlist <youtube url>`
