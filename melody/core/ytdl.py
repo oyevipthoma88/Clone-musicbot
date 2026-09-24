@@ -1083,9 +1083,42 @@ def _reap_cookie_copies() -> None:
         pass
 
 
+# ── Cookie distrust breaker ───────────────────────────────────────────────────
+# ROOT-CAUSE FIX (Sep 24 Heroku log: every single resolve AND all 8 download
+# rungs answered "Sign in to confirm you're not a bot", playback handoff failed
+# after 12.98s): when YT_COOKIES go stale YouTube does not just ignore them —
+# an exported-but-flagged session makes the *authenticated* web/TV clients
+# answer LOGIN_REQUIRED, and _ydl_opts() restricts the client list to exactly
+# those clients whenever cookies are present. So one dead cookie jar removed
+# every client that could still have worked. Once YouTube rejects the jar we
+# stop sending it for a while, which puts the cookie-less
+# web_safari/android_vr/ios client list back in play immediately.
+_COOKIE_DISTRUST_UNTIL: float = 0.0
+_COOKIE_DISTRUST_SECONDS: float = float(os.getenv("YT_COOKIE_DISTRUST_SECONDS", "900"))
+
+
+def cookies_distrusted() -> bool:
+    """True while a rejected cookie jar is being skipped."""
+    return time.time() < _COOKIE_DISTRUST_UNTIL
+
+
+def note_cookie_rejected(reason: str = "") -> None:
+    """Remember that YouTube refused this cookie jar and stop sending it."""
+    global _COOKIE_DISTRUST_UNTIL
+    if not _COOKIE_TEXT or cookies_distrusted():
+        return
+    _COOKIE_DISTRUST_UNTIL = time.time() + _COOKIE_DISTRUST_SECONDS
+    LOGGER.warning(
+        "🍪 YT_COOKIES rejected by YouTube (%s) — switching to cookie-less "
+        "clients for %.0fs. Export a FRESH cookies.txt from a logged-in "
+        "YouTube session and update the YT_COOKIES config var.",
+        reason or "bot check", _COOKIE_DISTRUST_SECONDS,
+    )
+
+
 def cookiefile_for_run() -> "str | None":
     """Fresh private copy of the cookie jar for one yt-dlp run (or None)."""
-    if not _COOKIE_TEXT:
+    if not _COOKIE_TEXT or cookies_distrusted():
         return None
     with _COOKIE_LOCK:
         try:
@@ -2949,6 +2982,44 @@ def _is_permanent_download_error(exc: BaseException) -> bool:
     return False
 
 
+_BOTWALL_MARKERS = (
+    "sign in to confirm",
+    "confirm you're not a bot",
+    "confirm you\u2019re not a bot",
+    "login_required",
+    "please sign in",
+    "use --cookies",
+)
+
+
+def _is_botwall_error(exc: "BaseException | None") -> bool:
+    """True when YouTube answered with its bot-check / sign-in wall."""
+    current: BaseException | None = exc
+    for _ in range(8):
+        if current is None:
+            break
+        text = str(current).lower()
+        if any(marker in text for marker in _BOTWALL_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+_COOKIELESS_CLIENTS = ["android_vr", "tv_simply", "ios", "web_safari"]
+
+
+def _strip_cookies_from_opts(opts: dict) -> dict:
+    """Drop the cookie jar and restore the cookie-less client list."""
+    out = dict(opts)
+    out.pop("cookiefile", None)
+    extractor_args = {k: dict(v) for k, v in (out.get("extractor_args") or {}).items()}
+    youtube = dict(extractor_args.get("youtube") or {})
+    youtube["player_client"] = list(_COOKIELESS_CLIENTS)
+    extractor_args["youtube"] = youtube
+    out["extractor_args"] = extractor_args
+    return out
+
+
 def _extract_with_retries(url: str, base_opts: dict, audio_only: bool):
     """Download `url`, walking the retry ladder until one attempt succeeds.
 
@@ -2960,10 +3031,20 @@ def _extract_with_retries(url: str, base_opts: dict, audio_only: bool):
     # /play busy for minutes. Bound the whole ladder by wall clock so a
     # genuinely broken video fails fast instead of holding the chat hostage.
     deadline = _time_mod.monotonic() + _env_float("DOWNLOAD_DEADLINE", 45.0)
+    # ⚡ 5-SECOND RULE: a bot-wall answer is identical on every rung — walking
+    # all 8 of them (twice, through the caller's clean retry) only burned the
+    # 13 seconds the Sep 24 log shows before the song was declared dead. Give
+    # the cookie-less client set one honest shot and then get out fast so the
+    # caller can reach its Invidious/direct rescue while the user is still
+    # waiting.
+    botwall_hits = 0
+    botwall_budget = max(1, _env_int("YT_BOTWALL_MAX_RUNGS", 3))
     for index, step in enumerate(_DOWNLOAD_LADDER):
         if index and _time_mod.monotonic() > deadline:
             LOGGER.warning("download ladder deadline hit for %s after %d attempts", url, index)
             break
+        if cookies_distrusted():
+            base_opts = _strip_cookies_from_opts(base_opts)
         opts = _apply_ladder_step(base_opts, step, audio_only)
         try:
             with _locked_ytdl(opts) as ydl:
@@ -3025,6 +3106,17 @@ def _extract_with_retries(url: str, base_opts: dict, audio_only: bool):
             raise
         except Exception as exc:  # noqa: BLE001 — every rung is a retry
             last_exc = exc
+            if _is_botwall_error(exc):
+                note_cookie_rejected("download rung %d" % (index + 1))
+                botwall_hits += 1
+                if botwall_hits >= botwall_budget:
+                    _purge_partial_outputs(opts.get("outtmpl"))
+                    LOGGER.info(
+                        "download blocked by YouTube bot check on %d rungs for %s "
+                        "— aborting ladder early so the direct rescue can run",
+                        botwall_hits, url,
+                    )
+                    raise
             if _is_permanent_download_error(exc):
                 _purge_partial_outputs(opts.get("outtmpl"))
                 LOGGER.info(
@@ -4826,6 +4918,10 @@ def _innertube_streams_sync(video_id: str, want_video: bool = False) -> "dict | 
                 # Refresh visitorData + PO token in the background so the next
                 # track gets a working session instead of muting the fast path.
                 _it_session.pop("at", None)
+                # A logged-in web client answering LOGIN_REQUIRED means the
+                # exported cookie jar itself is flagged/expired. Stop pinning
+                # every later resolve to the cookie-only client list.
+                note_cookie_rejected("innertube %s" % client_name)
             return None
 
         sd = data.get("streamingData") or {}
@@ -5462,7 +5558,7 @@ def _invidious_streams_sync(video_id: str, want_video: bool) -> dict | None:
             response = get_http_sync_client().get(
                 f"{instance}/api/v1/videos/{video_id}",
                 headers={"User-Agent": "Mozilla/5.0 (compatible; ApexVibesBot/1.0)"},
-                timeout=0.75,
+                timeout=_env_float("INVIDIOUS_TIMEOUT", 1.2),
             )
             if response.status_code != 200:
                 continue
@@ -5754,10 +5850,13 @@ async def resolve_stream_urls(
                     loop.run_in_executor(
                         YTDL_POOL, _invidious_streams_sync, vid_only, want_video,
                     ),
-                    timeout=_env_float("DIRECT_RESCUE_TIMEOUT", 1.5),
+                    timeout=_env_float("DIRECT_RESCUE_TIMEOUT", 2.5),
                 )
             except Exception as exc:  # noqa: BLE001
                 last_exc = exc
+                LOGGER.info("#stream Invidious rescue failed for %s: %s", vid_only, exc)
+            if not resolved:
+                LOGGER.info("#stream Invidious rescue found no format for %s", vid_only)
 
         if not resolved:
             # Only remember a *real* failure. A resolve that merely ran out of
