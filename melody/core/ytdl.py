@@ -1343,10 +1343,11 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # host, which is why stream= stayed at 3.2-3.6s). With cookies
         # present, ask only the two cookie/PO-token clients that work here.
         "player_client": (
-            # A single cookie-authenticated web_safari player call is enough
-            # on this host.  Asking tv_simply as well made yt-dlp wait for a
-            # second player response even after web_safari had exposed HLS.
-            ["web_safari"]
+            # TV clients (tv_simply/tv) use a different InnerTube endpoint
+            # that is far less aggressively bot-checked on datacenter IPs.
+            # web_safari alone gets LOGIN_REQUIRED when the cookie session is
+            # stale; tv_simply still answers OK with the same cookie jar.
+            ["web_safari", "tv_simply", "tv"]
             if has_cookies
             else ["web_safari", "android_vr", "default", "ios"]
         ),
@@ -2875,11 +2876,12 @@ def _apply_ladder_step(opts: dict, step: dict, audio_only: bool) -> dict:
         headers = dict(out.get("http_headers") or {})
         headers["User-Agent"] = ua
         out["http_headers"] = headers
-        if client not in {"web", "web_safari", "mweb", "web_embedded"}:
+        if client not in {"web", "web_safari", "mweb", "web_embedded", "tv", "tv_simply"}:
             # Browser cookies minted for desktop web are often rejected when
-            # replayed with a mobile/TV client and can turn a valid media URL
-            # into HTTP 403. Those client APIs are designed to work without
-            # the web cookie jar, so let the client-specific identity win.
+            # replayed with a mobile client and can turn a valid media URL
+            # into HTTP 403. TV clients, however, benefit from the cookie
+            # session on datacenter IPs — the authenticated session is what
+            # lifts the "Sign in to confirm you're not a bot" block.
             out.pop("cookiefile", None)
 
     fmt = step.get("_format")
@@ -4426,6 +4428,9 @@ def _innertube_player_sync(video_id: str) -> "dict | None":
     _CLIENT_CONTEXTS = [
         ("ANDROID_VR", "1.62.27",
          "com.google.android.apps.youtube.vr.oculus/1.62.27 (Linux; U; Android 12) gzip"),
+        ("TVHTML5_SIMPLY_EMBEDDED_PLAYER", "7.20250605",
+         "Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 "
+         "(KHTML, like Gecko) 85.0.4183.93/6.5 TV Safari/537.36"),
         ("WEB", "2.20260801.00.00",
          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
          "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"),
@@ -4739,10 +4744,17 @@ def _innertube_streams_sync(video_id: str, want_video: bool = False) -> "dict | 
         # clients answer LOGIN_REQUIRED on this host.  A real YT_COOKIES
         # session can ask WEB directly and often receives its HLS manifest in
         # one player call (~300 ms), before the heavier yt-dlp fallback starts.
-        # Probe only WEB here: launching mobile and WEB_REMIX requests too
-        # merely competes for the small worker pool and repeats known failures.
+        # TVHTML5_SIMPLY_EMBEDDED_PLAYER uses a different endpoint that is far
+        # less aggressively bot-checked on datacenter IPs; it often answers OK
+        # when WEB returns LOGIN_REQUIRED with the same cookie jar.
         session = _innertube_session()
-        _CLIENTS = [("WEB", _IT_WEB_VERSION, _IT_WEB_UA, {})]
+        _CLIENTS = [
+            ("WEB", _IT_WEB_VERSION, _IT_WEB_UA, {}),
+            ("TVHTML5_SIMPLY_EMBEDDED_PLAYER", "7.20250605",
+             "Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) 85.0.4183.93/6.5 TV Safari/537.36",
+             {}),
+        ]
     else:
         _CLIENTS = [_by_name[n] for n in _MOBILE_ORDER if n in _by_name]
 
