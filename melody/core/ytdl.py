@@ -181,6 +181,12 @@ def _http_client_kwargs() -> dict:
         # InnerTube probe into LOGIN_REQUIRED.
         "cookies": _NoStoreCookies(),
     }
+    # A cloud/datacenter IP can remain blocked even with a valid PO token.
+    # Apply the explicitly configured proxy to InnerTube as well as yt-dlp;
+    # otherwise the fast direct resolver still fails on the blocked dyno IP.
+    proxy = os.getenv("YTDLP_PROXY", "").strip()
+    if proxy:
+        kwargs["proxy"] = proxy
     return kwargs
 
 
@@ -1485,6 +1491,10 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     # with "Impersonate target not available" on older curl_cffi builds.
     if cookiefile:
         opts["cookiefile"] = cookiefile
+    proxy = os.getenv("YTDLP_PROXY", "").strip()
+    if proxy:
+        # Credentials are passed directly to yt-dlp and never logged here.
+        opts["proxy"] = proxy
 
     return opts
 

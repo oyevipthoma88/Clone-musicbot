@@ -23,5 +23,10 @@ WORKDIR /app/
 RUN pip3 install --no-cache-dir --upgrade pip \
     && pip3 install --no-cache-dir --upgrade --requirement requirements.txt
 
+# The Heroku Python buildpack runs this hook automatically, but Docker does
+# not. Without it yt-dlp has no Deno/bgutil proof-of-origin provider and cloud
+# deployments hit YouTube's "Sign in to confirm you're not a bot" wall.
+RUN chmod +x bin/post_compile && bin/post_compile /app
+
 # Start bot
 CMD bash start
