@@ -57,6 +57,10 @@
       "description": "Paste the raw contents of a cookies.txt exported from a browser logged into youtube.com (Netscape format). Base64 also accepted. Strongly recommended on Heroku to avoid bot-detection blocks.",
       "required": false
     },
+    "YTDLP_PROXY": {
+      "description": "Optional HTTP/SOCKS proxy used by yt-dlp and InnerTube when the Heroku IP is bot-checked.",
+      "required": false
+    },
     "YOUTUBE_API_KEY": {
       "description": "YouTube Data API v3 key — makes song search/metadata resolve in ~0.3s instead of several seconds. Comma-separate multiple keys to auto-rotate on quota.",
       "required": false
