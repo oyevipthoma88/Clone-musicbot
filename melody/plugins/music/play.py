@@ -431,6 +431,12 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
                 ),
                 parse_mode=enums.ParseMode.HTML,
             )
+            spawn(log_activity(
+                f"❌ <b>Play Failed</b>\n"
+                f"• Song: <code>{html.escape(info['title'][:60])}</code>\n"
+                f"• Chat: {html.escape(chat.title or 'Private')} (<code>{chat.id}</code>)\n"
+                f"• ⏱ Time: <b>{_total_elapsed:.2f}s</b>"
+            ))
             LOGGER.warning(
                 "playback handoff failed | force=%s chat=%s video=%s total=%.2fs",
                 force, chat.id, info["id"], _total_elapsed,
@@ -456,7 +462,10 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
             f"🎵 <b>{activity_label}</b>\n"
             f"• Song: <code>{html.escape(info['title'][:60])}</code>\n"
             f"• Requested by: {html.escape(requester_name or 'Unknown')} (<code>{requester_id}</code>)\n"
-            f"• Chat: {html.escape(chat.title or 'Private')} (<code>{chat.id}</code>)"
+            f"• Chat: {html.escape(chat.title or 'Private')} (<code>{chat.id}</code>)\n"
+            f"• ⏱ Time: <b>{_total_elapsed:.2f}s</b> "
+            f"(search {_t_info:.2f}s · stream {_stream_elapsed:.2f}s)"
+            f"{' ✅' if _total_elapsed <= 5.0 else ' ⚠️ slow'}"
         ))
 
         status_label = "Force Played" if force else ("Now Playing" if playing_now else "Added to Queue")
