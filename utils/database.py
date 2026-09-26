@@ -97,6 +97,34 @@ async def get_chat_count() -> int:
     return int(await chats_col.count_documents({}))
 
 
+# ─── User management (needed by /broadcast) ──────────────────────────────────
+
+async def add_user(user_id: int, name: str = "", username: str = ""):
+    """Remember a DM user so broadcasts can reach them.
+
+    ROOT-CAUSE FIX: `users_col` existed but nothing ever wrote to it, so a
+    broadcast had no PM audience at all.
+    """
+    await users_col.update_one(
+        {"user_id": int(user_id)},
+        {"$set": {"user_id": int(user_id), "name": name, "username": username}},
+        upsert=True,
+    )
+
+
+async def get_all_users() -> list:
+    return await users_col.find({}, {"_id": 0, "user_id": 1}).to_list(None)
+
+
+async def get_user_count() -> int:
+    return int(await users_col.count_documents({}))
+
+
+async def remove_user(user_id: int):
+    """Drop a user who blocked the bot / deactivated the account."""
+    await users_col.delete_one({"user_id": int(user_id)})
+
+
 async def get_chat_owner(chat_id: int) -> "dict | None":
     """Return {"owner_id", "owner_name"} for whoever added the bot to this
     group, or None if unknown (e.g. chat predates this feature)."""

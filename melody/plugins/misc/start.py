@@ -4,6 +4,7 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import Message, InlineKeyboardMarkup, CallbackQuery
 from melody import bot
 from melody.config import Config
+from utils.database import add_user
 from utils.decorators import error_handler
 from utils.buttons import ikb, STYLE_PRIMARY, STYLE_SUCCESS, STYLE_DANGER
 from melody.logging import log_activity, log_group_event
@@ -54,6 +55,10 @@ def _back():
 async def start_dm(client: Client, message: Message):
     user = message.from_user
     if user:
+        spawn(
+            add_user(user.id, user.first_name or "", user.username or ""),
+            name=f"remember-user-{user.id}",
+        )
         spawn(log_activity(
             f"#start #dm\n<b>DM /start</b>\n"
             f"• User: <code>{html.escape(user.first_name or 'Unknown')}</code>"

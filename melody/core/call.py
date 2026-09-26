@@ -125,9 +125,12 @@ try:
     # bounded grace period so slow YouTube/CDN resolution does not become a
     # false playback crash.
     # ⚡ LONG-MIX FIX: Increased grace window to 90s (max 120s) so 1hr+ downloads don't crash
-    _PLAY_FALLBACK_TIMEOUT = max(30.0, min(180.0, float(os.getenv("PLAY_FALLBACK_TIMEOUT", "30"))))
+    # 30s was shorter than a bot-walled yt-dlp ladder plus the HTTP rescue that
+    # now saves those tracks, so a recoverable play was killed a second before
+    # its rescue file landed. 45s still keeps a truly dead track from hanging.
+    _PLAY_FALLBACK_TIMEOUT = max(30.0, min(180.0, float(os.getenv("PLAY_FALLBACK_TIMEOUT", "45"))))
 except Exception:  # noqa: BLE001
-    _PLAY_FALLBACK_TIMEOUT = 30.0
+    _PLAY_FALLBACK_TIMEOUT = 45.0
 
 try:  # py-tgcalls raises this when the assistant is not connected to the VC
     from pytgcalls.exceptions import NotInCallError
@@ -2370,6 +2373,17 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                 chat_id,
                 "❌ <b>Gaana play nahi ho paya.</b>\n\nDobara <code>/play</code> try karo.",
             )
+            if isinstance(exc, asyncio.TimeoutError):
+                # A source/startup timeout is an already-handled outcome: the
+                # chat was told, the retry ran, and the download rescue path
+                # owns the recovery. Dumping its 60-line traceback into the
+                # owner log channel on every slow track was pure noise and
+                # hid real crashes.
+                LOGGER.warning(
+                    "playback timed out for %s in %s after one retry (%s)",
+                    getattr(track, "video_id", "?"), chat_id, exc,
+                )
+                return False
 
         await send_error_log(
             f"_stream_track failed in {chat_id}",

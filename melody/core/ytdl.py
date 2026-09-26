@@ -3061,7 +3061,10 @@ def _extract_with_retries(url: str, base_opts: dict, audio_only: bool):
     # caller can reach its Invidious/direct rescue while the user is still
     # waiting.
     botwall_hits = 0
-    botwall_budget = max(1, _env_int("YT_BOTWALL_MAX_RUNGS", 3))
+    # Sep 26 log: three bot-walled rungs took ~20s; the caller's startup grace
+    # expired before the HTTP rescue could even start. Two rungs are enough to
+    # prove the wall is not rung-specific.
+    botwall_budget = max(1, _env_int("YT_BOTWALL_MAX_RUNGS", 2))
     for index, step in enumerate(_DOWNLOAD_LADDER):
         if index and _time_mod.monotonic() > deadline:
             LOGGER.warning("download ladder deadline hit for %s after %d attempts", url, index)
@@ -4329,7 +4332,37 @@ async def _download_audio_locked(
     # prefix; cache/persistence callers can therefore never receive a partial.
     await done_async.wait()
     if "error" in early_holder:
-        raise early_holder["error"]
+        dl_error = early_holder["error"]
+        # ROOT-CAUSE FIX (Sep 26 log: every yt-dlp rung answered "Sign in to
+        # confirm you're not a bot", so the fallback download produced no file
+        # and playback died with "fallback download exceeded startup budget").
+        # The direct resolver had ALREADY found a playable audio URL for the
+        # same video seconds earlier (InnerTube/Invidious). yt-dlp is the only
+        # component YouTube walls here, so fetch that resolved URL over plain
+        # HTTP instead of failing the whole request.
+        if (
+            audio_only
+            and not isinstance(dl_error, _DownloadCancelled)
+            and not _is_permanent_download_error(dl_error)
+        ):
+            try:
+                rescued = await _http_rescue_download(
+                    video_id, tag, early_state=early_state,
+                    cancel_event=cancel_event,
+                )
+            except Exception as rescue_exc:  # noqa: BLE001
+                LOGGER.info(
+                    "#download HTTP rescue failed for %s: %s",
+                    video_id, redact_sensitive_text(rescue_exc),
+                )
+                rescued = None
+            if rescued:
+                LOGGER.info(
+                    "\U0001f6df #download HTTP rescue supplied %s after yt-dlp failure (%s)",
+                    video_id, type(dl_error).__name__,
+                )
+                return rescued
+        raise dl_error
     path = early_holder.get("final_path")
     if path and os.path.exists(path) and not path.endswith(".part"):
         return path
@@ -4337,6 +4370,150 @@ async def _download_audio_locked(
     if found:
         return found[0]
     raise FileNotFoundError(f"Downloaded file not found for video_id={video_id}")
+
+
+_RESCUE_EXT_BY_MIME = {
+    "audio/webm": "webm",
+    "video/webm": "webm",
+    "audio/mp4": "m4a",
+    "video/mp4": "m4a",
+    "audio/mpeg": "mp3",
+    "audio/ogg": "webm",
+}
+
+
+async def _http_rescue_download(
+    video_id: str, tag: str,
+    early_state: "_EarlyDownloadState | None" = None,
+    cancel_event: "threading.Event | None" = None,
+) -> "str | None":
+    """Fetch audio straight off a resolved CDN/Invidious URL.
+
+    Used only after yt-dlp itself failed (YouTube bot wall, SABR-only formats,
+    dead rungs). The resolver ladder can still hand back a plain progressive
+    https URL for the very same video, and a normal HTTP GET is not subject to
+    yt-dlp's sign-in challenge, so this turns the previously fatal
+    "fallback download exceeded startup budget" into a normal play.
+
+    Returns a complete cache path, or None when no direct URL is usable.
+    """
+    if os.getenv("HTTP_RESCUE_DOWNLOAD", "1") == "0":
+        return None
+    try:
+        urls = await resolve_stream_urls(video_id, want_video=False, force=True)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.info("#download rescue resolve failed for %s: %s", video_id, exc)
+        return None
+    audio_url = (urls or {}).get("audio")
+    if not audio_url or not str(audio_url).lower().startswith(("http://", "https://")):
+        return None
+    headers = dict((urls or {}).get("headers") or {})
+
+    # An HLS playlist cannot be saved with a single GET — let ffmpeg mux it.
+    if ".m3u8" in audio_url:
+        return await _ffmpeg_rescue_download(video_id, tag, audio_url, headers)
+
+    budget = _env_float("HTTP_RESCUE_TIMEOUT", 60.0)
+    started = _time_mod.monotonic()
+    tmp_path = f"/tmp/melody_{video_id}_{tag}.rescue.part"
+    written = 0
+    ext = "m4a"
+    try:
+        client_kwargs = _http_client_kwargs()
+        client_kwargs["timeout"] = _httpx.Timeout(budget, connect=8.0)
+        async with _httpx.AsyncClient(**client_kwargs) as client:
+            async with client.stream("GET", audio_url, headers=headers) as response:
+                if response.status_code >= 400:
+                    LOGGER.info(
+                        "#download rescue GET %s returned HTTP %s",
+                        video_id, response.status_code,
+                    )
+                    return None
+                mime = str(response.headers.get("content-type", "")).split(";")[0].strip().lower()
+                ext = _RESCUE_EXT_BY_MIME.get(mime, "m4a")
+                with open(tmp_path, "wb") as fh:
+                    async for chunk in response.aiter_bytes(64 * 1024):
+                        if cancel_event is not None and cancel_event.is_set():
+                            raise _DownloadCancelled(
+                                "rescue download superseded by a newer request"
+                            )
+                        if _time_mod.monotonic() - started > budget:
+                            raise asyncio.TimeoutError(
+                                "rescue download exceeded its budget"
+                            )
+                        fh.write(chunk)
+                        written += len(chunk)
+        if written < 1024:
+            raise RuntimeError(f"rescue download produced only {written} bytes")
+        final_path = f"/tmp/melody_{video_id}_{tag}.{ext}"
+        os.replace(tmp_path, final_path)
+        LOGGER.info(
+            "\u2705 #download rescue fetched %s over HTTP (%.1f KB in %.2fs)",
+            video_id, written / 1024.0, _time_mod.monotonic() - started,
+        )
+        if early_state is not None and not early_state.ready.is_set():
+            early_state.path = final_path
+            early_state.ready.set()
+        return final_path
+    except _DownloadCancelled:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.info(
+            "#download rescue GET failed for %s: %s",
+            video_id, redact_sensitive_text(exc),
+        )
+        return None
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+
+
+async def _ffmpeg_rescue_download(
+    video_id: str, tag: str, url: str, headers: dict,
+) -> "str | None":
+    """Remux an HLS rescue source into a normal cache file (stream copy)."""
+    final_path = f"/tmp/melody_{video_id}_{tag}.m4a"
+    # Must end in ".part" so _complete_cache_files() can never mistake the
+    # half-remuxed file for a finished cache entry.
+    tmp_path = f"{final_path}.rescue.part"
+    header_blob = "".join(f"{k}: {v}\r\n" for k, v in (headers or {}).items())
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    if header_blob:
+        cmd += ["-headers", header_blob]
+    cmd += ["-i", url, "-vn", "-c:a", "copy", "-bsf:a", "aac_adtstoasc",
+            "-f", "mp4", tmp_path]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, err = await asyncio.wait_for(
+                proc.communicate(), timeout=_env_float("HTTP_RESCUE_TIMEOUT", 60.0),
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise
+        if proc.returncode != 0 or not os.path.exists(tmp_path) or os.path.getsize(tmp_path) < 1024:
+            LOGGER.info(
+                "#download HLS rescue failed for %s: %s",
+                video_id, redact_sensitive_text((err or b"").decode("utf-8", "ignore")[:200]),
+            )
+            return None
+        os.replace(tmp_path, final_path)
+        LOGGER.info("\u2705 #download HLS rescue remuxed %s", video_id)
+        return final_path
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.info("#download HLS rescue error for %s: %s", video_id, exc)
+        return None
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
