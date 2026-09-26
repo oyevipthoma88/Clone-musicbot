@@ -61,7 +61,7 @@ try:
     # bandwidth/CPU the resolve and the first ffmpeg frames were waiting for).
     # _delayed_download() waits ON the direct task, so a direct failure still
     # starts the download instantly; this only stops the pointless overlap.
-    configured_download_delay = float(os.getenv("DOWNLOAD_START_DELAY", "6.0"))
+    configured_download_delay = float(os.getenv("DOWNLOAD_START_DELAY", "0.0"))
 except Exception:  # noqa: BLE001
     configured_download_delay = 0.0
 # Start direct resolution and the fallback downloader in parallel. The old
@@ -115,7 +115,7 @@ try:
     # instead. The race still exits the INSTANT any source is ready, so a
     # larger ceiling costs nothing on the happy path and saves the slow one.
     _PLAY_START_BUDGET = max(
-        2.0, min(12.0, float(os.getenv("PLAY_START_BUDGET", "8.0")))
+        2.0, min(12.0, float(os.getenv("PLAY_START_BUDGET", "5.0")))
     )
 except Exception:  # noqa: BLE001
     _PLAY_START_BUDGET = 8.0
