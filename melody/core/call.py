@@ -1254,6 +1254,25 @@ async def ensure_assistant_peer(chat_id: int) -> bool:
             _peer_inflight.pop(chat_id, None)
 
 
+async def _assistant_is_member(chat_id: int) -> "bool | None":
+    """True/False when the bot can tell whether the assistant is a real
+    member of chat_id; None when it cannot check (no rights / network)."""
+    try:
+        from melody import bot
+        assistant_id = await _get_assistant_id()
+        if not assistant_id:
+            return None
+        member = await bot.get_chat_member(chat_id, assistant_id)
+    except Exception as exc:
+        name = type(exc).__name__.upper() + str(exc).upper()
+        if "USER_NOT_PARTICIPANT" in name or "USERNOTPARTICIPANT" in name:
+            return False
+        return None
+    return member.status not in (
+        enums.ChatMemberStatus.LEFT, enums.ChatMemberStatus.BANNED,
+    )
+
+
 async def _ensure_assistant_peer_impl(chat_id: int) -> bool:
     """Make sure the assistant account can resolve `chat_id`. Never raises.
 
@@ -1284,6 +1303,12 @@ async def _ensure_assistant_peer_impl(chat_id: int) -> bool:
         # surfaced as an uncatchable crash mid-playback.
         try:
             await assistant.get_chat(chat_id)
+            # ROOT FIX (assistant never auto-joined): a resolvable peer is
+            # NOT membership — public groups and kicked-but-cached chats
+            # resolve fine, so the join step was skipped and the VC join
+            # then failed. Confirm real membership once per process.
+            if await _assistant_is_member(chat_id) is False:
+                raise ChannelPrivate()
             _peer_verified.add(chat_id)
             _peer_ready.add(chat_id)
             return True
@@ -1304,6 +1329,17 @@ async def _ensure_assistant_peer_impl(chat_id: int) -> bool:
 
 
     # Not in storage (or the cached hash is stale) — fetch it once.
+    if await _assistant_is_member(chat_id) is False:
+        # Definitely not a member: go straight to the auto-join.
+        try:
+            if await _auto_join_assistant(chat_id):
+                await assistant.resolve_peer(chat_id)
+                _peer_ready.add(chat_id)
+                _peer_verified.add(chat_id)
+                return True
+        except Exception as exc:
+            LOGGER.debug("direct auto-join failed for %s: %s", chat_id, exc)
+        return False
     try:
         await assistant.get_chat(chat_id)
         await assistant.resolve_peer(chat_id)
@@ -2503,15 +2539,31 @@ async def _auto_join_assistant(chat_id: int) -> bool:
         try:
             link = await bot.export_chat_invite_link(chat_id)
         except Exception as exc:
-            _block_join(chat_id)
-            LOGGER.log(
-                _join_log_level(chat_id),
+            if "ADMIN" in str(exc).upper() or "RIGHT" in str(exc).upper():
+                _block_join(chat_id)
+                await _notify_playback_failed(
+                    chat_id,
+                    "⚠️ <b>Assistant ko group me add nahi kar pa raha.</b>\n"
+                    "Mujhe admin banao aur <b>Invite Users via Link</b> permission do, "
+                    "phir <code>/play</code> dobara bhejo.",
+                )
+            LOGGER.warning(
                 "Auto-join: bot could not export invite link for %s: %s", chat_id, exc,
             )
             return False
 
     try:
-        await assistant.join_chat(link)
+        try:
+            await assistant.join_chat(link)
+        except Exception as first_exc:
+            txt = str(first_exc).upper()
+            # ROOT FIX: bot.get_chat().invite_link can be an old/revoked
+            # link -> INVITE_HASH_EXPIRED/INVALID. Export a fresh one, retry.
+            if "INVITE_HASH" in txt or "EXPIRED" in txt or "INVALID" in txt:
+                link = await bot.export_chat_invite_link(chat_id)
+                await assistant.join_chat(link)
+            else:
+                raise
     except Exception as exc:
         # REQUESTED ("agar join request bheji to accept karna"): groups with
         # "approve new members" turned on convert the assistant's join into a
@@ -2543,7 +2595,10 @@ async def _auto_join_assistant(chat_id: int) -> bool:
         _join_warned.discard(chat_id)
         return True
     except Exception as exc:
-        _block_join(chat_id)
+        # Short back-off only (transient failures must not lock the chat
+        # out for 15 minutes).
+        import time as _time
+        _join_block[chat_id] = _time.monotonic() + 30.0
         LOGGER.log(
             _join_log_level(chat_id),
             "Auto-join: assistant still cannot resolve %s after join attempt: %s", chat_id, exc,
