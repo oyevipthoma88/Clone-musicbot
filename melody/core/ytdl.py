@@ -2994,6 +2994,11 @@ def _is_permanent_download_error(exc: BaseException) -> bool:
         if current is None:
             break
         text = str(current).lower()
+        # "Watch on the YouTube app / not available on your mobile browser"
+        # only blocks the mweb client — other clients play it fine, so it
+        # must stay retryable (was wrongly treated as permanent).
+        if "mobile browser" in text or "youtube app" in text:
+            return False
         if any(marker in text for marker in _PERMANENT_DOWNLOAD_MARKERS):
             return True
         current = current.__cause__ or current.__context__
