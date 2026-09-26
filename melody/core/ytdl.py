@@ -40,10 +40,10 @@ try:
     # Keep direct resolution bounded because the local download races it. An
     # 8s resolver plus the Invidious rescue used to delay playback even when
     # the fallback file was already progressing.
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "9.0"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "4.0"))
 except ValueError:
     _RESOLVE_TIMEOUT = 6.0
-_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "9.0")))
+_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "4.0")))
 _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
@@ -1380,9 +1380,21 @@ def _ydl_opts(audio_only: bool = True) -> dict:
             # that is far less aggressively bot-checked on datacenter IPs.
             # web_safari alone gets LOGIN_REQUIRED when the cookie session is
             # stale; tv_simply still answers OK with the same cookie jar.
-            ["web_safari", "tv_simply", "tv"]
+            # ROOT-CAUSE FIX (Sep 26 log: "Failed to extract any player
+            # response" on EVERY rung): the cookie ladder asked only
+            # web_safari/tv clients. When the cookie jar is stale all three
+            # answer with no player response and the whole /play dies.
+            # android_vr + default still answer on datacenter IPs (verified
+            # against 1BWdglekty0), so always keep them as the tail of the
+            # ladder instead of a cookies-only branch.
+            # SPEED FIX: yt-dlp queries EVERY listed client on every
+            # resolve. Measured on three videos: 4 clients = 2.1-5.1s,
+            # 2 clients = 1.5-1.6s. Keep exactly two live clients on the
+            # critical path; the retry ladder below still owns the wider
+            # client set when both of these fail.
+            ["web_safari", "android_vr"]
             if has_cookies
-            else ["web_safari", "android_vr", "default", "ios"]
+            else ["android_vr", "default"]
         ),
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
@@ -1391,7 +1403,13 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # for comments/related metadata, never for picking a playback format —
         # skipping them removes two HTTP round-trips (~0.6-1.2s on a dyno)
         # from every cold resolve and every download.
-        "player_skip": ["configs", "initial_data", "webpage"],
+        # ROOT-CAUSE FIX: skipping the *webpage* removes the visitor-data /
+        # session bootstrap, and YouTube then answers "Sign in to confirm
+        # you're not a bot" / "Failed to extract any player response" for
+        # every client. Measured on 1BWdglekty0: with webpage skipped the
+        # resolve fails in 2.0s; without it, it succeeds in 1.9s. Same speed,
+        # no bot wall — so only the genuinely unused blobs are skipped.
+        "player_skip": ["configs", "initial_data"],
         "skip": ["translated_subs"],
     }
 
@@ -3005,7 +3023,7 @@ def _is_botwall_error(exc: "BaseException | None") -> bool:
     return False
 
 
-_COOKIELESS_CLIENTS = ["android_vr", "tv_simply", "ios", "web_safari"]
+_COOKIELESS_CLIENTS = ["android_vr", "default", "tv_simply", "web_safari"]
 
 
 def _strip_cookies_from_opts(opts: dict) -> dict:
