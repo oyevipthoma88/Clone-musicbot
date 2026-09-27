@@ -21,6 +21,15 @@ py-tgcalls>=2.3.3,<2.4
 # is empty" on every rung of the retry ladder. Current releases handle SABR.
 # Floor bumped to a 2026 release, upper bound moved to the next major year.
 yt-dlp>=2026.8.19,<2027.0.0
+# ROOT-CAUSE FIX (bin/post_compile silently shipping a bot with NO PO-token
+# provider): the bgutil yt-dlp plugin used to come only from a build-time
+# GitHub zip download. When that download 503'd or the archive layout changed,
+# post_compile just printed a warning, the build still succeeded, and every
+# /play then hit "Sign in to confirm you're not a bot" with no provider loaded.
+# The plugin is also published on PyPI, so pip installs it deterministically on
+# every build; the vendored Deno server in vendor/ is still used as the token
+# backend and the warm HTTP fast path.
+bgutil-ytdlp-pot-provider>=1.3.1,<2
 curl_cffi>=0.16.2,<0.17
 Pillow>=12.3.0,<13
 aiohttp>=3.14.3,<4

@@ -1227,6 +1227,43 @@ else:
     LOGGER.warning("🍪 No cookies loaded — running as anonymous guest (more likely to be blocked on Heroku)")
 
 
+# ── ROOT-CAUSE BANNER: anonymous + datacenter IP = zero playable formats ────
+# Verified Sep 2026 from a clean datacenter host with yt-dlp 2026.8.19 AND a
+# live, healthy bgutil PO-token server (HTTP provider answering /ping 200):
+#
+#   player_client=web_safari / mweb / ios / web_embedded
+#       -> player response extracts fine, but the ONLY formats YouTube returns
+#          are storyboards (sb0-sb3). No audio, no video, at all.
+#   player_client=tv_simply / android_vr / default / tv
+#       -> "Sign in to confirm you're not a bot" / "The page needs to be
+#          reloaded."
+#
+# That is the whole bug in the attached worker log. It is NOT a missing PO
+# token, not a dead plugin, and not something any client-ladder, retry-rung or
+# fallback-resolver change inside this repo can fix: YouTube simply serves no
+# media streams to an *anonymous* session coming from a known cloud IP range.
+#
+# There are exactly two working remedies, both operator-side:
+#   1. YT_COOKIES  — cookies.txt exported from a browser logged into a
+#      throwaway Google account (use a private window, export, then close the
+#      window WITHOUT logging out so the session is not invalidated).
+#   2. YTDLP_PROXY — a residential/mobile HTTP proxy, which moves the request
+#      off the flagged datacenter range.
+#
+# So the loudest, most useful thing the process can do at boot is say so
+# unambiguously, instead of letting every /play die in a generic DownloadError.
+if not _HAS_COOKIES and not os.getenv("YTDLP_PROXY", "").strip():
+    LOGGER.error(
+        "🚨 ROOT CAUSE OF EVERY 'Sign in to confirm you're not a bot' FAILURE: "
+        "no YT_COOKIES and no YTDLP_PROXY are configured. From a datacenter IP "
+        "YouTube returns ZERO playable formats to an anonymous session even "
+        "with a valid PO token, so playback cannot work. Fix: set the "
+        "YT_COOKIES config var to the contents of a cookies.txt exported while "
+        "logged into youtube.com, or set YTDLP_PROXY to a residential proxy. "
+        "Everything else in the resolver ladder is already working."
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  yt-dlp options
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2056,17 +2093,59 @@ try:
 except (TypeError, ValueError):
     _INVIDIOUS_MAX_INSTANCES = 3
 
+# ── SPEED FIX: stop paying for dead public instances on every single track ──
+# Measured Sep 2026 against the whole hardcoded list above: every instance
+# answers 401 / 403 / 500 / 502 or refuses the connection outright for
+# /api/v1/videos/<id>. The rescue therefore never returns a format, yet the
+# worker log shows it burning 4.3-4.6 s on EVERY resolve
+# ("#stream Invidious rescue found no format for <id>") before the real
+# fallback download is even allowed to start.
+# A host that just failed is remembered for _INVIDIOUS_DEAD_TTL seconds and
+# skipped, so the rescue costs one probe per host per cooldown window instead
+# of a fresh serial timeout chain per song. When every host is in cooldown the
+# rescue returns immediately.
+_INVIDIOUS_DEAD: dict = {}
+_INVIDIOUS_DEAD_LOCK = threading.Lock()
+# NOTE: _env_float() is defined further down this module, so it cannot be
+# called at this import-time line without raising NameError.
+try:
+    _INVIDIOUS_DEAD_TTL = max(60.0, float(os.getenv("INVIDIOUS_DEAD_TTL", "900")))
+except (TypeError, ValueError):
+    _INVIDIOUS_DEAD_TTL = 900.0
+
+
+def _invidious_live_instances() -> list:
+    """Instances not currently in the failure cooldown, capped as configured."""
+    now = time.time()
+    with _INVIDIOUS_DEAD_LOCK:
+        for host, until in list(_INVIDIOUS_DEAD.items()):
+            if until <= now:
+                _INVIDIOUS_DEAD.pop(host, None)
+        dead = set(_INVIDIOUS_DEAD)
+    live = [inst for inst in _INVIDIOUS_INSTANCES if inst not in dead]
+    return live[:_INVIDIOUS_MAX_INSTANCES]
+
+
+def _mark_invidious_dead(instance: str) -> None:
+    with _INVIDIOUS_DEAD_LOCK:
+        _INVIDIOUS_DEAD[instance] = time.time() + _INVIDIOUS_DEAD_TTL
+
 
 def _invidious_search_sync(query: str) -> dict | None:
     """Secondary fallback: Invidious public instances."""
     import json, urllib.parse
     encoded = urllib.parse.quote_plus(query)
-    for inst in _INVIDIOUS_INSTANCES:
+    live = _invidious_live_instances()
+    if not live:
+        LOGGER.debug("Invidious search skipped — every instance is in failure cooldown")
+        return None
+    for inst in live:
         try:
             url = f"{inst}/api/v1/search?q={encoded}&type=video"
             client = get_http_sync_client()
             resp = client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; ApexVibesBot/1.0)"}, timeout=5.0)
             if resp.status_code != 200:
+                _mark_invidious_dead(inst)
                 continue
             items = json.loads(resp.text)
             res = next((i for i in items if i.get("type") == "video" and i.get("videoId")), None)
@@ -2083,6 +2162,7 @@ def _invidious_search_sync(query: str) -> dict | None:
                 "thumbnail": thumb, "uploader": res.get("author") or "",
             }
         except Exception as exc:
+            _mark_invidious_dead(inst)
             LOGGER.debug("Invidious (%s) failed: %s", inst, exc)
     LOGGER.warning("❌ All Invidious instances failed for: %s", query[:50])
     return None
@@ -5753,7 +5833,13 @@ def _invidious_streams_sync(video_id: str, want_video: bool) -> dict | None:
     searches and downloads do not depend on public instances.
     """
     import json
-    for instance in _INVIDIOUS_INSTANCES[:_INVIDIOUS_MAX_INSTANCES]:
+    live = _invidious_live_instances()
+    if not live:
+        # Every public instance is in failure cooldown: returning now keeps the
+        # rescue free instead of re-paying a serial timeout chain per track.
+        LOGGER.debug("#stream Invidious rescue skipped for %s — all instances cooling down", video_id)
+        return None
+    for instance in live:
         try:
             response = get_http_sync_client().get(
                 f"{instance}/api/v1/videos/{video_id}",
@@ -5761,6 +5847,7 @@ def _invidious_streams_sync(video_id: str, want_video: bool) -> dict | None:
                 timeout=_env_float("INVIDIOUS_TIMEOUT", 1.2),
             )
             if response.status_code != 200:
+                _mark_invidious_dead(instance)
                 continue
             data = json.loads(response.text) or {}
             formats = []
@@ -5796,6 +5883,7 @@ def _invidious_streams_sync(video_id: str, want_video: bool) -> dict | None:
             LOGGER.info("#stream Invidious direct fallback resolved %s via %s", video_id, instance)
             return picked
         except Exception as exc:  # noqa: BLE001
+            _mark_invidious_dead(instance)
             LOGGER.debug("Invidious direct resolver %s failed: %s", instance, exc)
     return None
 
