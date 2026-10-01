@@ -1996,14 +1996,44 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                         raise RuntimeError("early audio download completed without a file")
                     early_file = False
                 elif direct_only_video:
+                    # ROOT FIX: a long /vplay used to be a dead end here — the
+                    # full download stays (correctly) disabled for a multi-GB
+                    # movie, so the user just got "❌ Play Failed". The video
+                    # track still has a perfectly streamable AUDIO rendition,
+                    # which is both tiny and instant. Degrade to audio instead
+                    # of failing the request outright.
                     LOGGER.warning(
-                        "#stream direct-only video unavailable for %s in %s; "
-                        "skipping unsafe full download fallback",
+                        "#stream direct-only video unavailable for %s in %s — "
+                        "falling back to the audio-only direct stream",
                         track.video_id, chat_id,
                     )
-                    raise RuntimeError(
-                        "long video direct stream unavailable; local fallback disabled"
-                    ) from play_exc
+                    audio_stream = None
+                    try:
+                        audio_stream = await _build_direct_stream(
+                            chat_id, track, False, start_at, force=True,
+                        )
+                        if audio_stream is not None:
+                            await asyncio.wait_for(
+                                _pytgcalls.play(chat_id, audio_stream),
+                                timeout=_PLAY_PROBE_TIMEOUT,
+                            )
+                    except Exception as audio_exc:
+                        LOGGER.info(
+                            "#stream audio-only rescue failed for %s in %s (%s)",
+                            track.video_id, chat_id, type(audio_exc).__name__,
+                        )
+                        audio_stream = None
+                    if audio_stream is None:
+                        raise RuntimeError(
+                            "long video direct stream unavailable; local fallback disabled"
+                        ) from play_exc
+                    stream = audio_stream
+                    video = False
+                    direct_retry_ok = True
+                    LOGGER.info(
+                        "#stream long video %s in %s degraded to audio-only "
+                        "direct stream", track.video_id, chat_id,
+                    )
                 else:
                     # Handled fallback, not a failure: log at INFO so real problems
                     # stay visible in the logs.
@@ -2028,42 +2058,49 @@ async def _stream_track(chat_id: int, track, video: bool = False, _retry: bool =
                             track.video_id, audio_only=not video, priority=priority,
                             owner=chat_id, allow_early=not video,
                         )
-                if filepath and not filepath.endswith(".early"):
-                    spawn(_persist_completed_song(filepath, track), name=f"song-cache:{track.video_id}")
-                stream = _local_media_stream(chat_id, filepath, video, start_at)
-                if _is_stale_generation(chat_id, gen):
-                    LOGGER.info(
-                        "#stream discarding stale fallback resolve for %s in %s "
-                        "(gen=%s no longer authoritative)", track.video_id, chat_id, gen,
-                    )
-                    return
-                # The direct attempt may have burnt the cached peer (CHANNEL_INVALID
-                # in the log came from THIS second play, not the first): re-prime it.
-                forget_assistant_peer(chat_id)
-                await ensure_assistant_peer(chat_id)
-                try:
-                    await asyncio.wait_for(
-                        _pytgcalls.play(chat_id, stream),
-                        timeout=_LOCAL_PLAY_TIMEOUT,
-                    )
-                except ChatAdminRequired:
-                    # A direct probe can fail first and the fallback play can then
-                    # be the first call-creating RPC. Do not let that second
-                    # CHAT_ADMIN_REQUIRED escape into the generic crash logger.
-                    _block_vc_admin(chat_id)
-                    if download_task is not None and not download_task.done():
-                        download_task.cancel()
-                        download_task.add_done_callback(_consume_task_exception)
-                    if _vc_admin_notice_needed(chat_id):
-                        _mark_vc_admin_notified(chat_id)
-                        await _notify_playback_failed(
-                            chat_id, VC_ADMIN_REQUIRED_MESSAGE,
+                # ROOT FIX: this tail used to run even after a SUCCESSFUL direct
+                # retry (direct_retry_ok). With filepath still None it rebuilt a
+                # local stream from nothing and called play() a second time —
+                # which is exactly how an already-recovered song still ended as
+                # "❌ Play Failed". A recovered direct stream is already playing;
+                # only the download fallback needs the handoff below.
+                if not direct_retry_ok:
+                    if filepath and not filepath.endswith(".early"):
+                        spawn(_persist_completed_song(filepath, track), name=f"song-cache:{track.video_id}")
+                    stream = _local_media_stream(chat_id, filepath, video, start_at)
+                    if _is_stale_generation(chat_id, gen):
+                        LOGGER.info(
+                            "#stream discarding stale fallback resolve for %s in %s "
+                            "(gen=%s no longer authoritative)", track.video_id, chat_id, gen,
                         )
-                    LOGGER.info(
-                        "fallback VC creation blocked in %s: assistant needs admin rights",
-                        chat_id,
-                    )
-                    return False
+                        return
+                    # The direct attempt may have burnt the cached peer (CHANNEL_INVALID
+                    # in the log came from THIS second play, not the first): re-prime it.
+                    forget_assistant_peer(chat_id)
+                    await ensure_assistant_peer(chat_id)
+                    try:
+                        await asyncio.wait_for(
+                            _pytgcalls.play(chat_id, stream),
+                            timeout=_LOCAL_PLAY_TIMEOUT,
+                        )
+                    except ChatAdminRequired:
+                        # A direct probe can fail first and the fallback play can then
+                        # be the first call-creating RPC. Do not let that second
+                        # CHAT_ADMIN_REQUIRED escape into the generic crash logger.
+                        _block_vc_admin(chat_id)
+                        if download_task is not None and not download_task.done():
+                            download_task.cancel()
+                            download_task.add_done_callback(_consume_task_exception)
+                        if _vc_admin_notice_needed(chat_id):
+                            _mark_vc_admin_notified(chat_id)
+                            await _notify_playback_failed(
+                                chat_id, VC_ADMIN_REQUIRED_MESSAGE,
+                            )
+                        LOGGER.info(
+                            "fallback VC creation blocked in %s: assistant needs admin rights",
+                            chat_id,
+                        )
+                        return False
 
             # A newer request can arrive while the Telegram RPC above is in
             # flight. The external call cannot be rolled back, but its stale
