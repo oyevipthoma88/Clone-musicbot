@@ -327,10 +327,20 @@ except (TypeError, ValueError):
     _REMOTE_CHECK_CACHE_TTL = 10.0
 _remote_reach_cache: dict[str, float] = {}
 _REMOTE_REACH_CACHE_MAX = 256
+# Statuses where the CDN itself has made up its mind: the URL is dead for us.
+# Anything else (including 5xx, 429 and transport errors) is "we do not know",
+# and "we do not know" must never fail a user's /play on its own.
+_DEFINITE_REJECTIONS = frozenset({401, 403, 404, 410, 451})
 
 
-def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) -> bool:
-    """True when the CDN returns actual bytes from a ranged media GET.
+def _http_reachable_sync(
+    url: str, timeout: float, headers: dict | None = None
+) -> "bool | None":
+    """Tri-state ranged-GET preflight for a remote media URL.
+
+    True  — the CDN handed back real media bytes.
+    False — the CDN explicitly refused (401/403/404/410/451 on every attempt).
+    None  — inconclusive (timeout, TLS/transport failure, 5xx, empty body).
 
     Checking only the HTTP status accepted URLs whose headers arrived but whose
     media body then stalled; PyTgCalls timed out later and wasted the whole
@@ -348,7 +358,11 @@ def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) 
     everything we actually need: is the URL alive? If yes, hand the URL to
     ffmpeg immediately and start playing.
     """
+    from urllib.error import HTTPError
     from urllib.request import Request, urlopen
+
+    saw_definite_rejection = False
+    saw_inconclusive = False
 
     # LOG FIX: googlevideo ties a URL to the client that produced it. A single
     # desktop-Chrome UA got 403'd on `c=TVHTML5` URLs, so a perfectly playable
@@ -413,24 +427,60 @@ def _http_reachable_sync(url: str, timeout: float, headers: dict | None = None) 
                     stream=True,
                 )
                 try:
-                    if 200 <= int(resp.status_code) < 400:
+                    status = int(resp.status_code)
+                    if 200 <= status < 400:
                         first_bytes = next(resp.iter_content(chunk_size=2), b"")
-                        return bool(first_bytes)
+                        if first_bytes:
+                            return True
+                        # Headers arrived but the body is empty: inconclusive,
+                        # not proof that FFmpeg cannot read the stream.
+                        saw_inconclusive = True
+                    elif status in _DEFINITE_REJECTIONS:
+                        saw_definite_rejection = True
+                    else:
+                        saw_inconclusive = True
                 finally:
                     resp.close()
-            except Exception:
                 continue
+            except Exception:
+                # Transport-level failure (timeout, TLS, DNS hiccup). This says
+                # nothing about the URL itself — fall through to urllib.
+                saw_inconclusive = True
         req = Request(url, method="GET", headers=request_headers)
         try:
             with urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed CDN url
-                if 200 <= getattr(resp, "status", 200) < 400:
-                    return bool(resp.read(2))
-        except Exception:
+                status = int(getattr(resp, "status", 200))
+                if 200 <= status < 400:
+                    if resp.read(2):
+                        return True
+                    saw_inconclusive = True
+                elif status in _DEFINITE_REJECTIONS:
+                    saw_definite_rejection = True
+                else:
+                    saw_inconclusive = True
+        except HTTPError as exc:  # noqa: PERF203 - explicit status handling
+            if int(getattr(exc, "code", 0)) in _DEFINITE_REJECTIONS:
+                saw_definite_rejection = True
+            else:
+                saw_inconclusive = True
             continue
-    return False
+        except Exception:
+            saw_inconclusive = True
+            continue
+    # ROOT FIX ("❌ Play Failed" on perfectly playable songs): this used to
+    # return a bare False for BOTH "the CDN refused this URL" and "our 0.9s
+    # cloud budget expired / curl blew up". check_stream() then raised
+    # StreamProbeUnavailable, and for a direct-only source there is no second
+    # chance — the user saw a failure for a stream that was actually alive.
+    # Report "unknown" (None) unless the CDN gave a definite verdict, and let
+    # the caller hand the URL to FFmpeg optimistically.
+    if saw_definite_rejection and not saw_inconclusive:
+        return False
+    return None
 
 
-async def _remote_reachable(url: str, headers: dict | None = None) -> bool:
+async def _remote_reachable(url: str, headers: dict | None = None) -> "bool | None":
+    """Tri-state: True reachable, False explicitly refused, None unknown."""
     import asyncio
 
     if not isinstance(url, str) or not url.lower().startswith(("http://", "https://")):
@@ -448,15 +498,17 @@ async def _remote_reachable(url: str, headers: dict | None = None) -> bool:
             ),
             timeout=_REMOTE_CHECK_BUDGET + 0.25,
         )
-        if reachable:
+        if reachable is True:
             _remote_reach_cache[url] = time.monotonic() + _REMOTE_CHECK_CACHE_TTL
             if len(_remote_reach_cache) > _REMOTE_REACH_CACHE_MAX:
                 cutoff = sorted(_remote_reach_cache, key=_remote_reach_cache.get)
                 for old_url in cutoff[: len(_remote_reach_cache) - _REMOTE_REACH_CACHE_MAX]:
                     _remote_reach_cache.pop(old_url, None)
-        return bool(reachable)
+        return reachable
     except Exception:
-        return False
+        # Our own budget expired — that is a statement about this worker, not
+        # about the CDN URL. Unknown, never "dead".
+        return None
 
 
 def apply_pytgcalls_probe_patch() -> None:
@@ -517,23 +569,37 @@ def apply_pytgcalls_probe_patch() -> None:
             if ".m3u8" in str(path).lower():
                 log.info("⚡ HLS source detected — skipping remote preflight.")
                 return None
-            if await _remote_reachable(path, stream_headers):
+            verdict = await _remote_reachable(path, stream_headers)
+            if verdict is True:
                 log.info(
                     "⚡ remote source reachable — skipping ffprobe pre-check, "
                     "playing directly."
                 )
                 return None
-            # The ranged GET is the authoritative, bounded remote preflight.
-            # Do not fall through to py-tgcalls' ffprobe here: on a blocked or
-            # throttled googlevideo URL ffprobe can spend 4s twice and then
-            # raise JSONDecodeError/ProcessLookupError. The local download is
-            # already racing in _stream_track(), so fail immediately and let
-            # that healthy fallback win instead of adding 8-15s of silence.
+            if verdict is None:
+                # ROOT FIX for the recurring "❌ Play Failed": the preflight is
+                # budgeted to under a second on a cloud dyno, so a slow (but
+                # perfectly alive) googlevideo URL regularly failed to answer
+                # in time. Treating that silence as "dead stream" is what
+                # killed real playbacks. An inconclusive preflight now hands
+                # the URL straight to FFmpeg — it opens the stream with a far
+                # bigger budget, and the local download is still racing behind
+                # it for the genuinely broken case.
+                log.info(
+                    "⚡ remote preflight inconclusive — optimistic direct handoff."
+                )
+                return None
+            # Only an explicit CDN refusal (403/404/410/…) gets here. The ranged
+            # GET is the authoritative, bounded remote preflight: do not fall
+            # through to py-tgcalls' ffprobe, which can spend 4s twice on such a
+            # URL and then raise JSONDecodeError/ProcessLookupError. The local
+            # download is already racing in _stream_track(), so fail immediately
+            # and let that healthy fallback win instead of adding 8-15s silence.
             log.debug(
-                "remote source failed ranged preflight — using download fallback."
+                "remote source refused by CDN — using download fallback."
             )
             raise StreamProbeUnavailable(
-                "remote source failed bounded ranged preflight"
+                "remote source explicitly refused by CDN"
             )
         attempts = (1,) if local else (1, 2)
         for attempt in attempts:
