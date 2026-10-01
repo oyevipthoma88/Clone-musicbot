@@ -3092,7 +3092,39 @@ _BOTWALL_MARKERS = (
     "login_required",
     "please sign in",
     "use --cookies",
+    # A flagged/expired session answers with this instead of the classic
+    # sign-in wall. Same verdict: the jar is no longer trusted.
+    "cookies are no longer valid",
 )
+
+# ROOT FIX for the intermittent "cookies error": a BROKEN cookie jar (bad
+# Netscape header, unreadable/truncated copy, jar rewritten by a concurrent
+# yt-dlp run) is not a bot wall, so it never tripped the distrust breaker.
+# Every rung of the ladder then re-attached the same broken file and failed
+# the same way, and the user saw a cookie error instead of a song. Treat it
+# as a rejected jar too: distrust it and let the cookie-less clients play.
+_COOKIE_FILE_MARKERS = (
+    "does not look like a netscape format cookies file",
+    "netscape format cookies",
+    "unable to load cookies",
+    "could not load cookies",
+    "cookies file",
+    "cookiefile",
+    "invalid cookie",
+)
+
+
+def _is_cookie_file_error(exc: "BaseException | None") -> bool:
+    """True when yt-dlp could not use the cookie jar we handed it."""
+    current: BaseException | None = exc
+    for _ in range(8):
+        if current is None:
+            break
+        text = str(current).lower()
+        if any(marker in text for marker in _COOKIE_FILE_MARKERS):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
 
 
 def _is_botwall_error(exc: "BaseException | None") -> bool:
@@ -3212,6 +3244,15 @@ def _extract_with_retries(url: str, base_opts: dict, audio_only: bool):
             raise
         except Exception as exc:  # noqa: BLE001 — every rung is a retry
             last_exc = exc
+            # ROOT FIX ("kabhi kabhi cookies error aata"): a broken/unreadable
+            # cookie jar fails EVERY rung of the ladder identically, because
+            # each rung re-attaches the same file. It is not a bot wall, so the
+            # distrust breaker never fired and the whole ladder burnt out on a
+            # file problem. Distrust the jar on first sighting — from the next
+            # rung on, cookiefile_for_run() returns None and the cookie-less
+            # clients take over, which is exactly what rescues these plays.
+            if _is_cookie_file_error(exc):
+                note_cookie_rejected("unusable cookie jar on rung %d" % (index + 1))
             if _is_botwall_error(exc):
                 note_cookie_rejected("download rung %d" % (index + 1))
                 botwall_hits += 1
