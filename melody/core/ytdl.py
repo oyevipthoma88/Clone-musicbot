@@ -4491,13 +4491,25 @@ async def _download_audio_locked(
         )
         if alt_path:
             return alt_path
-        # Alt source failed too — do NOT fall through to the YouTube race
-        # or yt-dlp ladder: YouTube is bot-walled on this host, so both will
-        # just burn another 5-15s before failing. Raise immediately so the
-        # user gets a clean error instead of a 16s timeout.
-        raise FileNotFoundError(
-            f"YouTube blocked and alt source found no match for {video_id}"
-        )
+        # Alt source had no match. Raising here made every song missing from
+        # JioSaavn/SoundCloud (mashups, long mixes, rare regional tracks) fail
+        # for the whole block TTL, and since YouTube was never retried the
+        # block flag never cleared. Give YouTube ONE real attempt instead;
+        # success proves the wall is gone and clears the flag for everyone.
+        LOGGER.info("alt source had no match for %s while YouTube marked blocked — trying YouTube once", video_id)
+        try:
+            path = await _youtube_download_locked(
+                video_id, audio_only, tag, cancel_event=cancel_event,
+                early_state=early_state,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise FileNotFoundError(
+                f"YouTube blocked and alt source found no match for {video_id}: {str(exc)[:120]}"
+            ) from exc
+        if path:
+            _alt_source.clear_youtube_block()
+            LOGGER.info("✅ YouTube download worked again for %s — block cleared", video_id)
+        return path
 
     if not audio_only or not _race_enabled() or not is_valid_video_id(video_id):
         return await _youtube_download_locked(
