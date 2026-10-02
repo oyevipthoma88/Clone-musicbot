@@ -57,6 +57,22 @@ _MIN_BYTES = 64 * 1024
 
 # ── circuit breaker ──────────────────────────────────────────────────────
 _yt_blocked_until = 0.0
+_ALT_FILES: set = set()
+
+
+def is_audio_only_file(path) -> bool:
+    """True for files with no video track (alt-source or audio-only cache).
+
+    /vplay falls back to these when YouTube is walled; call.py must then
+    build an audio-only MediaStream or PyTgCalls dies on NoVideoSourceFound.
+    """
+    if not path:
+        return False
+    p = str(path)
+    if p in _ALT_FILES:
+        return True
+    base = os.path.basename(p)
+    return bool(re.search(r"_a\.[A-Za-z0-9]+$", base))
 
 
 def enabled() -> bool:
@@ -335,20 +351,42 @@ async def fetch_alternative_audio(
         return None  # mixes / jukeboxes / podcasts — no sane single-track match
     final_base = f"/tmp/melody_{video_id}_{tag}"
     order = [p.strip() for p in os.getenv("ALT_SOURCE_ORDER", "jiosaavn,soundcloud").split(",")]
-    for name in order:
-        fn = _PROVIDERS.get(name)
-        if fn is None:
-            continue
-        started = time.monotonic()
+    providers = [(n, _PROVIDERS[n]) for n in order if n in _PROVIDERS]
+    if not providers:
+        return None
+    # SPEED: providers run in PARALLEL. The first one starts immediately,
+    # every next one gets a short head-start delay (ALT_STAGGER, default
+    # 1.5s) so a fast JioSaavn hit does not waste a SoundCloud search, but a
+    # slow/no-match JioSaavn never costs more than ~1.5s.
+    stagger = max(0.0, float(os.getenv("ALT_STAGGER", "1.5") or 1.5))
+    started = time.monotonic()
+
+    async def _run(idx, name, fn):
+        if idx:
+            await asyncio.sleep(stagger * idx)
+        if cancel_event is not None and cancel_event.is_set():
+            return None
         try:
             path = await fn(query, want_dur, final_base, cancel_event)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
             LOGGER.info("alt/%s failed for %s: %s", name, video_id, str(exc)[:200])
-            continue
+            return None
         if path:
             LOGGER.info("✅ alt source %s supplied %s in %.2fs", name, video_id,
                         time.monotonic() - started)
-            return path
-    return None
+        return path
+
+    tasks = [asyncio.ensure_future(_run(i, n, f)) for i, (n, f) in enumerate(providers)]
+    try:
+        for fut in asyncio.as_completed(tasks):
+            path = await fut
+            if path:
+                _ALT_FILES.add(path)
+                return path
+        return None
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
