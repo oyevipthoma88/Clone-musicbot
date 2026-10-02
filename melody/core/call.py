@@ -148,6 +148,7 @@ from pyrogram.errors import (
     UserBannedInChannel,
 )
 from melody.logging import LOGGER, redact_sensitive_text, send_error_log
+from melody.core import alt_source as _alt_source
 
 
 async def _persist_completed_song(filepath, track) -> None:
@@ -1070,6 +1071,11 @@ def _ffmpeg_params(
 def _local_media_stream(chat_id: int, filepath: str, video: bool, seconds: int = 0):
     """MediaStream for an already-downloaded local file."""
     audio_quality = _get_audio_quality()
+    if video and _alt_source.is_audio_only_file(filepath):
+        # /vplay fell back to an audio-only source (YouTube walled): play the
+        # song as audio instead of failing on NoVideoSourceFound.
+        LOGGER.info("vplay %s: audio-only fallback file, streaming as audio", chat_id)
+        video = False
     if video:
         return MediaStream(
             filepath,
