@@ -1449,7 +1449,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
             # client set when both of these fail.
             ["web_safari", "android_vr"]
             if has_cookies
-            else ["android_vr", "default"]
+            else ["tv_simply", "android_vr", "mweb"]
         ),
         "formats": ["missing_pot"],
         # SPEED FIX: the watch-page "configs" request and translated-subtitle
@@ -3276,6 +3276,32 @@ def _extract_with_retries(url: str, base_opts: dict, audio_only: bool):
                 botwall_hits += 1
                 if botwall_hits >= botwall_budget:
                     _purge_partial_outputs(opts.get("outtmpl"))
+                    # ROOT FIX: before aborting, give the tv_simply client (which
+                    # bypasses the datacenter bot wall without cookies) one shot.
+                    try:
+                        tv_opts = _strip_cookies_from_opts(dict(opts))
+                        ea = dict(tv_opts.get("extractor_args") or {})
+                        yt = dict(ea.get("youtube") or {})
+                        yt["player_client"] = ["tv_simply"]
+                        ea["youtube"] = yt
+                        tv_opts["extractor_args"] = ea
+                        with _locked_ytdl(tv_opts) as ydl:
+                            info = ydl.extract_info(url, download=True)
+                            path = ydl.prepare_filename(info)
+                            req = info.get("requested_downloads") or []
+                            fp = info.get("filepath")
+                            if req and isinstance(req[0], dict):
+                                fp = req[0].get("filepath") or fp
+                            if fp and os.path.exists(fp):
+                                path = fp
+                            if os.path.exists(path) and os.path.getsize(path) >= 1024:
+                                LOGGER.info("✅ tv_simply rescue beat the bot wall for %s", url)
+                                return info, path
+                    except _DownloadCancelled:
+                        raise
+                    except Exception as tv_exc:  # noqa: BLE001
+                        LOGGER.info("tv_simply rescue failed for %s: %s", url, str(tv_exc)[:160])
+                        _purge_partial_outputs(opts.get("outtmpl"))
                     LOGGER.info(
                         "download blocked by YouTube bot check on %d rungs for %s "
                         "— aborting ladder early so the direct rescue can run",
@@ -4503,8 +4529,9 @@ async def _download_audio_locked(
                 early_state=early_state,
             )
         except Exception as exc:  # noqa: BLE001
-            raise FileNotFoundError(
-                f"YouTube blocked and alt source found no match for {video_id}: {str(exc)[:120]}"
+            _alt_source.mark_youtube_blocked()
+            raise RuntimeError(
+                f"Track unavailable right now (YouTube bot-check + no alt match) for {video_id}"
             ) from exc
         if path:
             _alt_source.clear_youtube_block()
