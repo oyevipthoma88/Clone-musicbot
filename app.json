@@ -61,6 +61,11 @@
       "description": "Optional HTTP/SOCKS proxy used by yt-dlp and InnerTube when the Heroku IP is bot-checked.",
       "required": false
     },
+    "ALT_SOURCE": {
+      "description": "1 = when YouTube blocks the server, play the same song from JioSaavn/SoundCloud instead of failing. 0 = disable.",
+      "value": "1",
+      "required": false
+    },
     "YOUTUBE_API_KEY": {
       "description": "YouTube Data API v3 key — makes song search/metadata resolve in ~0.3s instead of several seconds. Comma-separate multiple keys to auto-rotate on quota.",
       "required": false
