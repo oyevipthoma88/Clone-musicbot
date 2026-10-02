@@ -4465,7 +4465,8 @@ async def _download_audio_locked(
     (that would cut the playing song); otherwise the loser is cancelled.
     """
     # YouTube known-walled on this host: skip the 10-20s yt-dlp ladder.
-    if _alt_source.youtube_blocked():
+    # /vplay must stay VIDEO: never short-circuit to an audio-only alt file.
+    if audio_only and _alt_source.youtube_blocked():
         alt_path = await _alt_source_download(
             video_id, _cache_tag(True),
             early_state=early_state if audio_only else None,
@@ -4667,8 +4668,8 @@ async def _youtube_download_locked(
             ):
                 _alt_source.mark_youtube_blocked(type(dl_error).__name__)
             alt_path = None
-            if alt_after_failure:
-                # /vplay too: an audio-only copy beats an error; call.py
+            if alt_after_failure and audio_only:
+                # /play only — /vplay must never silently become audio: an audio-only copy beats an error; call.py
                 # streams it as audio (alt_source.is_audio_only_file).
                 alt_path = await _alt_source_download(
                     video_id, _cache_tag(True),
