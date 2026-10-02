@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import html
 import os
+import difflib
 import re
 import time
 from typing import Optional
@@ -136,12 +137,52 @@ def _tokens(text: str) -> set:
     return {w for w in re.findall(r"[a-z0-9\u0900-\u097f]+", (text or "").lower()) if len(w) > 1}
 
 
+def _norm_tok(w: str) -> str:
+    # Collapse common Hinglish/Marathi transliteration variants so
+    # 'laal'=='lal', 'sangaychay'=='sangaichay', 'bangadi'=='bangdi'.
+    w = re.sub(r"(.)\1+", r"\1", w)          # laal -> lal, mulkk -> mulk
+    w = w.replace("y", "i").replace("w", "v").replace("ee", "i").replace("oo", "u")
+    w = re.sub(r"(?<=.)[aeiou]", "", w)        # drop inner vowels (keep first char)
+    return w
+
+
+def _tok_match(a: str, b: str) -> bool:
+    if a == b:
+        return True
+    na, nb = _norm_tok(a), _norm_tok(b)
+    if na == nb and len(na) >= 2:
+        return True
+    if min(len(a), len(b)) >= 4 and difflib.SequenceMatcher(None, a, b).ratio() >= 0.8:
+        return True
+    return False
+
+
+def _overlap(q: set, c: set, c_text: str) -> float:
+    """Fuzzy share of query words found in the candidate (spelling-tolerant)."""
+    if not q or not c:
+        return 0.0
+    joined = re.sub(r"[^a-z0-9\u0900-\u097f]", "", (c_text or "").lower())
+    hits = 0
+    for w in q:
+        if any(_tok_match(w, x) for x in c) or (len(w) >= 6 and w in joined):
+            hits += 1
+    q_score = hits / len(q)
+    c_score = hits / max(1, len(c))
+    # Query words mostly present -> match; also reward short exact candidates.
+    return max(q_score, min(1.0, c_score * 1.2)) if hits else 0.0
+
+
 def _score(query: str, cand_title: str, want_dur: int, cand_dur: int, relaxed: bool = False) -> float:
     q, c = _tokens(query), _tokens(cand_title)
     if not q or not c:
         return 0.0
-    overlap = len(q & c) / max(1, min(len(q), len(c)))
-    min_overlap = 0.3 if relaxed else 0.5
+    overlap = _overlap(q, c, cand_title)
+    # Song name must match, not just the artist: the first word of the query
+    # (always the song title after clean_title) has to be in the candidate.
+    first = next((w for w in re.findall(r"[a-z0-9\u0900-\u097f]+", query.lower()) if len(w) > 1), "")
+    if first and not any(_tok_match(first, x) for x in c):
+        return 0.0
+    min_overlap = 0.34 if relaxed else 0.5
     if overlap < min_overlap:
         return 0.0  # title does not match — never play a random song
     score = overlap
@@ -150,9 +191,26 @@ def _score(query: str, cand_title: str, want_dur: int, cand_dur: int, relaxed: b
         tol = max(20, int(want_dur * 0.15))
         max_diff = tol * 6 if relaxed else tol * 3
         if diff > max_diff:
-            return 0.0  # clearly a different track (or a 1h jukebox)
-        score += 0.5 if diff <= tol else 0.0
+            # Official videos often carry long intros/outros. A very strong
+            # title match is still the same song; anything weaker is not.
+            if overlap < 0.8 or diff > max(240, want_dur * 0.6):
+                return 0.0
+            score -= 0.2
+        elif diff <= tol:
+            score += 0.5
     return score
+
+
+def song_core(title: str) -> str:
+    """Just the song name: 'Tu Rehnuma. Le Gaana Baaja | Love...' -> 'Tu Rehnuma'."""
+    t = (title or "").replace("&amp;", "&")
+    t = _BRACKET_RE.sub(" ", t)
+    parts = [p.strip() for p in _SPLIT_RE.split(t) if p.strip()]
+    t = parts[0] if parts else t
+    t = re.split(r"[.|]", t)[0]
+    t = re.sub(r"[#@\"'“”‘’:;,!?/\\]+", " ", t)
+    t = re.sub(r"\b(official|video|song|full|audio|lyrical|lyrics|hd|4k)\b", " ", t, flags=re.I)
+    return re.sub(r"\s+", " ", t).strip()
 
 
 def _good_enough(score: float, want_dur: int) -> bool:
@@ -406,11 +464,11 @@ async def fetch_alternative_audio(
     # noise-word stripping). This catches songs where clean_title() removed
     # a key word or the alt-source catalogue uses a slightly different name.
     if not _relaxed and os.getenv("ALT_RELAXED_RETRY", "1").strip().lower() not in {"0", "false", "no", "off"}:
-        broad_query = (title or "").strip()
-        if broad_query and broad_query != query:
-            LOGGER.info("🔄 alt source relaxed retry for %s with broader query %r", video_id, broad_query[:60])
+        core = song_core(title)
+        if core and len(_tokens(core)) >= 1 and clean_title(core) != query:
+            LOGGER.info("🔄 alt source relaxed retry for %s with song-name query %r", video_id, core[:60])
             return await fetch_alternative_audio(
-                video_id, tag, broad_query, uploader, duration, cancel_event,
+                video_id, tag, core, uploader, duration, cancel_event,
                 _relaxed=True,
             )
     return None
