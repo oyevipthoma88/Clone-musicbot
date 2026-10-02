@@ -416,7 +416,7 @@ async def fetch_alternative_audio(
     if len(_tokens(query)) < 1:
         return None
     want_dur = int(duration or 0)
-    if want_dur and want_dur > 20 * 60:
+    if want_dur and want_dur > int(os.getenv("ALT_MAX_DURATION", "7200")):
         return None  # mixes / jukeboxes / podcasts — no sane single-track match
     final_base = f"/tmp/melody_{video_id}_{tag}"
     order = [p.strip() for p in os.getenv("ALT_SOURCE_ORDER", "jiosaavn,soundcloud").split(",")]
