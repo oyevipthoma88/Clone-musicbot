@@ -91,6 +91,23 @@ def direct_stream_muted() -> bool:
     return False
 
 
+def _innertube_stream_skip_clients() -> list[str]:
+    """Clients to skip when the host is muted.
+
+    BUG FIX (Oct 2 log: "innertube blocked on this host (25/2) — skipping
+    direct InnerTube probes for 300s"): after just 2 failures the mute
+    killed EVERY InnerTube client including IOS — the only client that
+    reliably returns unciphered CDN URLs from a datacenter IP. IOS still
+    answers OK even when WEB/TVHTML5/ANDROID_VR are LOGIN_REQUIRED, so it
+    stays in the probe set. Only the clients that actually fail (web family
+    + ANDROID_VR) are skipped.
+    """
+    if not _innertube_stream_muted():
+        return []
+    return ["WEB", "MWEB", "WEB_EMBEDDED_PLAYER", "WEB_REMIX",
+            "TVHTML5", "ANDROID_VR"]
+
+
 def _note_innertube_stream(ok: bool) -> None:
     """Track consecutive host-level InnerTube direct-stream failures."""
     global _it_stream_fail_streak, _it_stream_muted_until
@@ -104,8 +121,8 @@ def _note_innertube_stream(ok: bool) -> None:
     if _it_stream_fail_streak >= _IT_MUTE_AFTER and not _innertube_stream_muted():
         _it_stream_muted_until = _time_mod.monotonic() + _IT_MUTE_TTL
         LOGGER.info(
-            "#stream innertube blocked on this host (%d/%d) — skipping direct "
-            "InnerTube probes for %.0fs, using cookie yt-dlp first",
+            "#stream innertube blocked on this host (%d/%d) — muting web/TV "
+            "clients for %.0fs, keeping IOS/mobile probes alive",
             _it_stream_fail_streak, _IT_MUTE_AFTER, _IT_MUTE_TTL,
         )
 
@@ -3141,7 +3158,7 @@ def _is_botwall_error(exc: "BaseException | None") -> bool:
     return False
 
 
-_COOKIELESS_CLIENTS = ["android_vr", "default", "tv_simply", "web_safari"]
+_COOKIELESS_CLIENTS = ["tv_simply", "tv", "android_vr", "default", "web_safari"]
 
 
 def _strip_cookies_from_opts(opts: dict) -> dict:
@@ -5332,7 +5349,13 @@ def _innertube_streams_sync(video_id: str, want_video: bool = False) -> "dict | 
 
     _WEB_FAMILY = ("TVHTML5", "MWEB", "WEB", "WEB_EMBEDDED_PLAYER",
                    "WEB_REMIX", "TVHTML5_SIMPLY_EMBEDDED_PLAYER")
-    cookie_header = _innertube_cookie_header()
+    # BUG FIX (Oct 2 log: "innertube blocked on this host (25/2)"):
+    # cookies_distrusted() means YouTube rejected the cookie jar, but
+    # _innertube_cookie_header() still returns the stale cookie text — so the
+    # stream resolver kept using the cookie-only WEB clients (which answer
+    # LOGIN_REQUIRED) instead of switching to the cookie-less mobile clients
+    # that can still return unciphered CDN URLs from a datacenter IP.
+    cookie_header = _innertube_cookie_header() if not cookies_distrusted() else ""
 
     # SPEED FIX — LIVE-VERIFIED from a datacenter IP (Sep 10 2026), the exact
     # environment this bot runs in:
@@ -5368,7 +5391,24 @@ def _innertube_streams_sync(video_id: str, want_video: bool = False) -> "dict | 
              {}),
         ]
     else:
-        _CLIENTS = [_by_name[n] for n in _MOBILE_ORDER if n in _by_name]
+        # TVHTML5_SIMPLY_EMBEDDED_PLAYER uses a different InnerTube endpoint
+        # that is far less aggressively bot-checked on datacenter IPs. It often
+        # returns usable HLS manifests even when every mobile client answers
+        # LOGIN_REQUIRED, so it joins the cookie-less probe set.
+        _tv_embedded = ("TVHTML5_SIMPLY_EMBEDDED_PLAYER", "7.20250605",
+         "Mozilla/5.0 (SMART-TV; LINUX; Tizen 6.5) AppleWebKit/537.36 "
+         "(KHTML, like Gecko) 85.0.4183.93/6.5 TV Safari/537.36",
+         {})
+        _CLIENTS = [_by_name[n] for n in _MOBILE_ORDER if n in _by_name] + [_tv_embedded]
+
+    # Filter out clients muted by the host-level streak breaker. IOS and
+    # TVHTML5_SIMPLY_EMBEDDED_PLAYER stay alive because they use different
+    # endpoints that are less aggressively bot-checked on datacenter IPs.
+    _skip = set(_innertube_stream_skip_clients())
+    if _skip:
+        _CLIENTS = [c for c in _CLIENTS if c[0] not in _skip]
+        if not _CLIENTS:
+            return None
 
     def _probe(entry):
         client_name, client_ver, ua, extra = entry
@@ -6301,7 +6341,11 @@ async def resolve_stream_urls(
         # latency was coming from.
         tasks = []
         it_task = None
-        if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid_only or "") and not _innertube_stream_muted():
+        # BUG FIX: "not _innertube_stream_muted()" killed ALL InnerTube probes
+        # for 300s after 2 failures. IOS still works from datacenter IPs even
+        # when other clients are blocked, so always launch the InnerTube probe
+        # — the resolver itself filters out the muted clients internally.
+        if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid_only or ""):
             it_task = asyncio.ensure_future(
                 loop.run_in_executor(YTDL_POOL, _resolve_stream_urls_innertube, vid_only, want_video)
             )

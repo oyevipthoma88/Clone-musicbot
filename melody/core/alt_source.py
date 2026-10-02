@@ -136,18 +136,20 @@ def _tokens(text: str) -> set:
     return {w for w in re.findall(r"[a-z0-9\u0900-\u097f]+", (text or "").lower()) if len(w) > 1}
 
 
-def _score(query: str, cand_title: str, want_dur: int, cand_dur: int) -> float:
+def _score(query: str, cand_title: str, want_dur: int, cand_dur: int, relaxed: bool = False) -> float:
     q, c = _tokens(query), _tokens(cand_title)
     if not q or not c:
         return 0.0
     overlap = len(q & c) / max(1, min(len(q), len(c)))
-    if overlap < 0.5:
+    min_overlap = 0.3 if relaxed else 0.5
+    if overlap < min_overlap:
         return 0.0  # title does not match — never play a random song
     score = overlap
     if want_dur and cand_dur:
         diff = abs(int(want_dur) - int(cand_dur))
         tol = max(20, int(want_dur * 0.15))
-        if diff > tol * 3:
+        max_diff = tol * 6 if relaxed else tol * 3
+        if diff > max_diff:
             return 0.0  # clearly a different track (or a 1h jukebox)
         score += 0.5 if diff <= tol else 0.0
     return score
@@ -155,6 +157,13 @@ def _score(query: str, cand_title: str, want_dur: int, cand_dur: int) -> float:
 
 def _good_enough(score: float, want_dur: int) -> bool:
     return score >= 0.5
+
+
+_RELAXED_THRESHOLD = 0.3
+
+
+def _good_enough_relaxed(score: float, want_dur: int) -> bool:
+    return score >= _RELAXED_THRESHOLD
 
 
 # ── JioSaavn ─────────────────────────────────────────────────────────────
@@ -219,20 +228,21 @@ async def _stream_to_file(client, url, headers, dest_tmp, cancel_event, budget) 
     return written
 
 
-async def _try_jiosaavn(query, want_dur, final_base, cancel_event) -> Optional[str]:
+async def _try_jiosaavn(query, want_dur, final_base, cancel_event, relaxed=False) -> Optional[str]:
     timeout = httpx.Timeout(30.0, connect=6.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         cands = await _saavn_candidates(client, query)
         if not cands:
             return None
         ranked = sorted(
-            ((_score(query, c["title"], want_dur, c["duration"]), c) for c in cands),
+            ((_score(query, c["title"], want_dur, c["duration"], relaxed=relaxed), c) for c in cands),
             key=lambda x: x[0], reverse=True,
         )
         best_score, best = ranked[0]
-        if not _good_enough(best_score, want_dur):
-            LOGGER.info("alt/jiosaavn: no confident match for %r (best=%.2f %r)",
-                        query, best_score, best["title"][:60])
+        threshold_fn = _good_enough_relaxed if relaxed else _good_enough
+        if not threshold_fn(best_score, want_dur):
+            LOGGER.info("alt/jiosaavn: no confident match for %r (best=%.2f %r) relaxed=%s",
+                        query, best_score, best["title"][:60], relaxed)
             return None
         pref = os.getenv("ALT_SAAVN_BITRATE", "320").strip() or "320"
         tmp = f"{final_base}.alt.part"
@@ -261,7 +271,7 @@ async def _try_jiosaavn(query, want_dur, final_base, cancel_event) -> Optional[s
 
 
 # ── SoundCloud (yt-dlp) ──────────────────────────────────────────────────
-def _soundcloud_sync(query, want_dur, final_base) -> Optional[str]:
+def _soundcloud_sync(query, want_dur, final_base, relaxed=False) -> Optional[str]:
     from yt_dlp import YoutubeDL
 
     base = {"quiet": True, "no_warnings": True, "noprogress": True,
@@ -273,7 +283,7 @@ def _soundcloud_sync(query, want_dur, final_base) -> Optional[str]:
         return None
     ranked = sorted(
         ((_score(query, e.get("title", "") + " " + str(e.get("uploader") or ""),
-                 want_dur, int(e.get("duration") or 0)), e) for e in entries),
+                 want_dur, int(e.get("duration") or 0), relaxed=relaxed), e) for e in entries),
         key=lambda x: x[0], reverse=True,
     )
     outtmpl = f"{final_base}.altsc.%(ext)s"
@@ -282,9 +292,10 @@ def _soundcloud_sync(query, want_dur, final_base) -> Optional[str]:
         # Progressive first (single GET), HLS as backup.
         "format": "bestaudio[protocol=http]/bestaudio[protocol^=http]/bestaudio/best",
     }
+    threshold_fn = _good_enough_relaxed if relaxed else _good_enough
     tried = 0
     for score, cand in ranked:
-        if not _good_enough(score, want_dur) or tried >= 3:
+        if not threshold_fn(score, want_dur) or tried >= 3:
             break
         tried += 1
         path = None
@@ -306,18 +317,18 @@ def _soundcloud_sync(query, want_dur, final_base) -> Optional[str]:
         LOGGER.info("🎧 alt/soundcloud matched %r -> %r", query, str(cand.get("title"))[:60])
         return final
     if not tried:
-        LOGGER.info("alt/soundcloud: no confident match for %r", query)
+        LOGGER.info("alt/soundcloud: no confident match for %r (relaxed=%s)", query, relaxed)
     return None
 
 
-async def _try_soundcloud(query, want_dur, final_base, cancel_event) -> Optional[str]:
+async def _try_soundcloud(query, want_dur, final_base, cancel_event, relaxed=False) -> Optional[str]:
     loop = asyncio.get_running_loop()
     try:
         from melody.core.pools import YTDL_POOL as pool
     except Exception:  # noqa: BLE001
         pool = None
     return await asyncio.wait_for(
-        loop.run_in_executor(pool, _soundcloud_sync, query, want_dur, final_base), 60.0,
+        loop.run_in_executor(pool, _soundcloud_sync, query, want_dur, final_base, relaxed), 60.0,
     )
 
 
@@ -334,7 +345,7 @@ _PROVIDERS = {"jiosaavn": _try_jiosaavn, "soundcloud": _try_soundcloud}
 
 async def fetch_alternative_audio(
     video_id: str, tag: str, title: str, uploader: str = "", duration: int = 0,
-    cancel_event=None,
+    cancel_event=None, _relaxed: bool = False,
 ) -> Optional[str]:
     """Download the same song from a non-YouTube source.
 
@@ -367,7 +378,7 @@ async def fetch_alternative_audio(
         if cancel_event is not None and cancel_event.is_set():
             return None
         try:
-            path = await fn(query, want_dur, final_base, cancel_event)
+            path = await fn(query, want_dur, final_base, cancel_event, relaxed=_relaxed)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001
@@ -385,8 +396,21 @@ async def fetch_alternative_audio(
             if path:
                 _ALT_FILES.add(path)
                 return path
-        return None
     finally:
         for t in tasks:
             if not t.done():
                 t.cancel()
+
+    # RELAXED RETRY: when both providers failed with the strict threshold,
+    # retry with a lower threshold and a broader query (raw title without
+    # noise-word stripping). This catches songs where clean_title() removed
+    # a key word or the alt-source catalogue uses a slightly different name.
+    if not _relaxed and os.getenv("ALT_RELAXED_RETRY", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        broad_query = (title or "").strip()
+        if broad_query and broad_query != query:
+            LOGGER.info("🔄 alt source relaxed retry for %s with broader query %r", video_id, broad_query[:60])
+            return await fetch_alternative_audio(
+                video_id, tag, broad_query, uploader, duration, cancel_event,
+                _relaxed=True,
+            )
+    return None
