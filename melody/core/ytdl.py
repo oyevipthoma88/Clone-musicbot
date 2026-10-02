@@ -4491,6 +4491,13 @@ async def _download_audio_locked(
         )
         if alt_path:
             return alt_path
+        # Alt source failed too — do NOT fall through to the YouTube race
+        # or yt-dlp ladder: YouTube is bot-walled on this host, so both will
+        # just burn another 5-15s before failing. Raise immediately so the
+        # user gets a clean error instead of a 16s timeout.
+        raise FileNotFoundError(
+            f"YouTube blocked and alt source found no match for {video_id}"
+        )
 
     if not audio_only or not _race_enabled() or not is_valid_video_id(video_id):
         return await _youtube_download_locked(
@@ -4735,6 +4742,12 @@ async def _http_rescue_download(
     Returns a complete cache path, or None when no direct URL is usable.
     """
     if os.getenv("HTTP_RESCUE_DOWNLOAD", "1") == "0":
+        return None
+    # SPEED FIX: when YouTube is bot-walled on this host, the rescue's
+    # resolve_stream_urls() call will also fail (all clients return
+    # LOGIN_REQUIRED). Skip it entirely and let the alt-source fallback handle it.
+    if _alt_source.youtube_blocked():
+        LOGGER.debug("#download rescue skipped for %s — YouTube bot-walled", video_id)
         return None
     try:
         urls = await resolve_stream_urls(video_id, want_video=False, force=True)
@@ -6341,11 +6354,13 @@ async def resolve_stream_urls(
         # latency was coming from.
         tasks = []
         it_task = None
-        # BUG FIX: "not _innertube_stream_muted()" killed ALL InnerTube probes
-        # for 300s after 2 failures. IOS still works from datacenter IPs even
-        # when other clients are blocked, so always launch the InnerTube probe
-        # — the resolver itself filters out the muted clients internally.
-        if re.fullmatch(r"[A-Za-z0-9_-]{11}", vid_only or ""):
+        # SPEED FIX (Oct 2 log: when YouTube is bot-walled, every InnerTube
+        # client returns LOGIN_REQUIRED and yt-dlp returns the bot wall too —
+        # together they burn 1-3s per song before falling back to download.
+        # When the host is already marked blocked, skip both and go straight
+        # to the download/alt-source path).
+        _yt_blocked = _alt_source.youtube_blocked()
+        if not _yt_blocked and re.fullmatch(r"[A-Za-z0-9_-]{11}", vid_only or ""):
             it_task = asyncio.ensure_future(
                 loop.run_in_executor(YTDL_POOL, _resolve_stream_urls_innertube, vid_only, want_video)
             )
@@ -6365,10 +6380,11 @@ async def resolve_stream_urls(
                     _prune_stream_url_state()
                     LOGGER.info("⚡ #stream innertube head-start resolved %s", video_id)
                     return fast
-        ydl_task = asyncio.ensure_future(
-            loop.run_in_executor(YTDL_POOL, _resolve_stream_urls_sync, target, want_video)
-        )
-        tasks.append(ydl_task)
+        if not _yt_blocked:
+            ydl_task = asyncio.ensure_future(
+                loop.run_in_executor(YTDL_POOL, _resolve_stream_urls_sync, target, want_video)
+            )
+            tasks.append(ydl_task)
 
         resolved = None
         last_exc: Exception | None = None
