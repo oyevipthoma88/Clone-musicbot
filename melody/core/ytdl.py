@@ -4449,25 +4449,118 @@ async def _alt_source_download(
     return path
 
 
+def _race_enabled() -> bool:
+    return _env_flag("ALT_RACE", True) and _alt_source.enabled()
+
+
 async def _download_audio_locked(
     video_id: str, audio_only: bool, tag: str,
     cancel_event: "threading.Event | None" = None,
     early_state: _EarlyDownloadState | None = None,
 ) -> str:
-    loop = asyncio.get_running_loop()
-    early_holder: dict = {}
+    """5-SECOND RULE: race YouTube and the alt source (JioSaavn/SoundCloud).
 
-    # ROOT-CAUSE FIX (Oct 2 log: every /play died on "Sign in to confirm
-    # you're not a bot" even with YT_COOKIES + YOUTUBE_API_KEY). Once YouTube
-    # has walled this host, walking the whole yt-dlp ladder again only adds
-    # 10-20s before the same failure. Go straight to the non-YouTube audio
-    # source; YouTube is retried automatically when the breaker expires.
-    if audio_only and _alt_source.youtube_blocked():
+    Both start together; whichever hands playback a file first wins. If
+    YouTube already handed a growing prefix to playback it is never killed
+    (that would cut the playing song); otherwise the loser is cancelled.
+    """
+    # YouTube known-walled on this host: skip the 10-20s yt-dlp ladder.
+    if _alt_source.youtube_blocked():
         alt_path = await _alt_source_download(
-            video_id, tag, early_state=early_state, cancel_event=cancel_event,
+            video_id, _cache_tag(True),
+            early_state=early_state if audio_only else None,
+            cancel_event=cancel_event,
         )
         if alt_path:
             return alt_path
+
+    if not audio_only or not _race_enabled() or not is_valid_video_id(video_id):
+        return await _youtube_download_locked(
+            video_id, audio_only, tag, cancel_event=cancel_event,
+            early_state=early_state,
+        )
+
+    yt_cancel = threading.Event()
+    alt_cancel = threading.Event()
+
+    async def _link_cancel():
+        while True:
+            await asyncio.sleep(0.2)
+            if cancel_event is not None and cancel_event.is_set():
+                yt_cancel.set()
+                alt_cancel.set()
+                return
+
+    delay = max(0.0, _env_float("ALT_RACE_DELAY", 0.0))
+
+    async def _alt():
+        if delay:
+            await asyncio.sleep(delay)
+        return await _alt_source_download(
+            video_id, tag, early_state=early_state, cancel_event=alt_cancel,
+        )
+
+    linker = asyncio.ensure_future(_link_cancel())
+    yt_task = asyncio.ensure_future(_youtube_download_locked(
+        video_id, audio_only, tag, cancel_event=yt_cancel,
+        early_state=early_state, alt_after_failure=False,
+    ))
+    alt_task = asyncio.ensure_future(_alt())
+    yt_error: "BaseException | None" = None
+    try:
+        pending = {yt_task, alt_task}
+        while pending:
+            done, pending = await asyncio.wait(
+                pending, return_when=asyncio.FIRST_COMPLETED,
+            )
+            if alt_task in done:
+                try:
+                    alt_path = alt_task.result()
+                except BaseException:  # noqa: BLE001
+                    alt_path = None
+                if alt_path:
+                    yt_playing = (
+                        early_state is not None and early_state.ready.is_set()
+                        and early_state.path and early_state.path != alt_path
+                    )
+                    if yt_playing and not yt_task.done():
+                        # YouTube prefix is already on air: let it finish.
+                        try:
+                            return await yt_task
+                        except BaseException:  # noqa: BLE001
+                            return alt_path
+                    if not yt_task.done():
+                        yt_cancel.set()
+                        yt_task.add_done_callback(
+                            lambda t: t.cancelled() or t.exception()
+                        )
+                    LOGGER.info("\u26a1 #race alt source won for %s", video_id)
+                    return alt_path
+            if yt_task in done:
+                try:
+                    path = yt_task.result()
+                except BaseException as exc:  # noqa: BLE001
+                    yt_error = exc
+                    continue
+                if not alt_task.done():
+                    alt_cancel.set()
+                    alt_task.cancel()
+                return path
+        if cancel_event is not None and cancel_event.is_set():
+            raise _DownloadCancelled("superseded by a newer playback request")
+        raise yt_error or FileNotFoundError(f"no source for {video_id}")
+    finally:
+        linker.cancel()
+
+
+async def _youtube_download_locked(
+    video_id: str, audio_only: bool, tag: str,
+    cancel_event: "threading.Event | None" = None,
+    early_state: _EarlyDownloadState | None = None,
+    alt_after_failure: bool = True,
+) -> str:
+    loop = asyncio.get_running_loop()
+    early_holder: dict = {}
 
     # SPEED FIX: this used to be
     #     await loop.run_in_executor(None, early_event.wait, TIMEOUT)
@@ -4518,7 +4611,7 @@ async def _download_audio_locked(
                 if not t.done():
                     t.cancel()
         path = early_holder.get("early_path")
-        if path and os.path.exists(path):
+        if path and os.path.exists(path) and not early_state.ready.is_set():
             early_state.path = path
             early_state.ready.set()
 
@@ -4564,7 +4657,7 @@ async def _download_audio_locked(
         # the permanent-error gate above treats as terminal. Truly removed or
         # private videos have no title metadata, so the alt search skips them,
         # and a strict title match means a wrong song is never played.
-        if audio_only and not isinstance(dl_error, _DownloadCancelled):
+        if not isinstance(dl_error, _DownloadCancelled):
             err_text = str(dl_error).lower()
             if _is_botwall_error(dl_error) or any(
                 m in err_text for m in (
@@ -4573,9 +4666,15 @@ async def _download_audio_locked(
                 )
             ):
                 _alt_source.mark_youtube_blocked(type(dl_error).__name__)
-            alt_path = await _alt_source_download(
-                video_id, tag, early_state=early_state, cancel_event=cancel_event,
-            )
+            alt_path = None
+            if alt_after_failure:
+                # /vplay too: an audio-only copy beats an error; call.py
+                # streams it as audio (alt_source.is_audio_only_file).
+                alt_path = await _alt_source_download(
+                    video_id, _cache_tag(True),
+                    early_state=early_state if audio_only else None,
+                    cancel_event=cancel_event,
+                )
             if alt_path:
                 LOGGER.info(
                     "\U0001f6df #download alt source supplied %s after YouTube failure (%s)",
