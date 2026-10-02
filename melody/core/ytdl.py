@@ -231,6 +231,7 @@ if os.path.isdir(_BGUTIL_PLUGIN_DIR):
 from yt_dlp import YoutubeDL
 from melody.config import Config
 from melody.logging import LOGGER, redact_sensitive_text, send_error_log
+from melody.core import alt_source as _alt_source
 
 
 # yt-dlp loads namespace plugins from inside YoutubeDL.__init__. Two concurrent
@@ -4387,6 +4388,67 @@ async def _download_audio_impl(
         await gate.release()
 
 
+async def _alt_track_meta(video_id: str) -> dict:
+    """Title/uploader/duration for the alt-source search. Never raises.
+
+    Uses only metadata paths YouTube does NOT bot-wall on cloud IPs: the
+    in-process cache, Data API v3 (YOUTUBE_API_KEY), InnerTube /next, oEmbed.
+    """
+    for key in (f"id:{video_id}", f"vid:{video_id}"):
+        try:
+            hit = _meta_cache_get(key)
+        except Exception:  # noqa: BLE001
+            hit = None
+        if hit and hit.get("title") and hit.get("title") != "Unknown":
+            return hit
+    try:
+        info = await asyncio.wait_for(get_video_details(video_id), timeout=5.0)
+        if info and info.get("title") and info.get("title") != "Unknown":
+            return info
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        loop = asyncio.get_running_loop()
+        info = await asyncio.wait_for(
+            loop.run_in_executor(YTDL_POOL, _youtube_oembed_sync, video_id), timeout=4.0,
+        )
+        if info:
+            return info
+    except Exception:  # noqa: BLE001
+        pass
+    return {}
+
+
+async def _alt_source_download(
+    video_id: str, tag: str,
+    early_state: "_EarlyDownloadState | None" = None,
+    cancel_event: "threading.Event | None" = None,
+) -> "str | None":
+    """Fetch the same song from JioSaavn/SoundCloud (see core/alt_source.py)."""
+    if not _alt_source.enabled() or not is_valid_video_id(video_id):
+        return None
+    meta = await _alt_track_meta(video_id)
+    if not meta:
+        LOGGER.info("alt source skipped for %s — no title metadata", video_id)
+        return None
+    try:
+        path = await _alt_source.fetch_alternative_audio(
+            video_id, tag,
+            title=str(meta.get("title") or ""),
+            uploader=str(meta.get("uploader") or meta.get("channel") or ""),
+            duration=int(meta.get("duration") or 0),
+            cancel_event=cancel_event,
+        )
+    except asyncio.CancelledError:
+        if cancel_event is not None and cancel_event.is_set():
+            raise _DownloadCancelled("alt download superseded by a newer request")
+        raise
+    if path and early_state is not None and not early_state.ready.is_set():
+        early_state.path = path
+        early_state.ready.set()
+    return path
+
+
 async def _download_audio_locked(
     video_id: str, audio_only: bool, tag: str,
     cancel_event: "threading.Event | None" = None,
@@ -4394,6 +4456,18 @@ async def _download_audio_locked(
 ) -> str:
     loop = asyncio.get_running_loop()
     early_holder: dict = {}
+
+    # ROOT-CAUSE FIX (Oct 2 log: every /play died on "Sign in to confirm
+    # you're not a bot" even with YT_COOKIES + YOUTUBE_API_KEY). Once YouTube
+    # has walled this host, walking the whole yt-dlp ladder again only adds
+    # 10-20s before the same failure. Go straight to the non-YouTube audio
+    # source; YouTube is retried automatically when the breaker expires.
+    if audio_only and _alt_source.youtube_blocked():
+        alt_path = await _alt_source_download(
+            video_id, tag, early_state=early_state, cancel_event=cancel_event,
+        )
+        if alt_path:
+            return alt_path
 
     # SPEED FIX: this used to be
     #     await loop.run_in_executor(None, early_event.wait, TIMEOUT)
@@ -4483,6 +4557,31 @@ async def _download_audio_locked(
                     video_id, type(dl_error).__name__,
                 )
                 return rescued
+        # Runs for EVERY YouTube failure, including the "permanent" ones:
+        # on a flagged cloud IP YouTube disguises its block as "Video
+        # unavailable. This content isn't available" / "Only storyboards are
+        # available" (the Oct 2 log even shows that for dQw4w9WgXcQ), which
+        # the permanent-error gate above treats as terminal. Truly removed or
+        # private videos have no title metadata, so the alt search skips them,
+        # and a strict title match means a wrong song is never played.
+        if audio_only and not isinstance(dl_error, _DownloadCancelled):
+            err_text = str(dl_error).lower()
+            if _is_botwall_error(dl_error) or any(
+                m in err_text for m in (
+                    "requested format is not available", "only storyboards",
+                    "only images are available",
+                )
+            ):
+                _alt_source.mark_youtube_blocked(type(dl_error).__name__)
+            alt_path = await _alt_source_download(
+                video_id, tag, early_state=early_state, cancel_event=cancel_event,
+            )
+            if alt_path:
+                LOGGER.info(
+                    "\U0001f6df #download alt source supplied %s after YouTube failure (%s)",
+                    video_id, type(dl_error).__name__,
+                )
+                return alt_path
         raise dl_error
     path = early_holder.get("final_path")
     if path and os.path.exists(path) and not path.endswith(".part"):
