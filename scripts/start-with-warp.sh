@@ -4,44 +4,49 @@ set -e
 WARP_DIR="/tmp/warp-plus"
 WARP_BIN="$WARP_DIR/warp-plus"
 WARP_PORT="${WARP_PORT:-8086}"
-ARCH="amd64"
-WARP_URL="https://github.com/bepass-org/warp-plus/releases/latest/download/warp-plus_linux-${ARCH}.zip"
+WARP_URL="https://github.com/bepass-org/warp-plus/releases/latest/download/warp-plus_linux-amd64.zip"
 
-# ⚠️ Proxy ko pehle hata do — sirf tab set karo jab WARP chale
 unset YTDLP_PROXY
 
 if [ "${ENABLE_WARP:-0}" = "1" ]; then
     echo "🌐 WARP enabled — checking binary..."
 
-    # Download + unzip WARP if missing
     if [ ! -x "$WARP_BIN" ]; then
         echo "📥 Downloading WARP-plus..."
         mkdir -p "$WARP_DIR"
         cd "$WARP_DIR"
         if ! curl -fL --retry 3 --retry-delay 5 --max-time 90 \
               -o warp.zip "$WARP_URL"; then
-            echo "❌ WARP download FAILED (URL: $WARP_URL)"
-            echo "⚠️ Continuing without proxy"
+            echo "❌ WARP download FAILED"
+            cd /app
             exec python -m melody
         fi
         if ! unzip -o warp.zip; then
             echo "❌ WARP unzip FAILED"
+            cd /app
             exec python -m melody
         fi
-        chmod +x warp-plus 2>/dev/null || chmod +x warp 2>/dev/null || true
-        # Binary name can be 'warp-plus' or 'warp'
-        if [ -f warp-plus ]; then mv warp-plus "$WARP_BIN"; 
-        elif [ -f warp ]; then mv warp "$WARP_BIN"; fi
+        # Binary is already at WARP_BIN after unzip — just chmod
+        chmod +x "$WARP_BIN" 2>/dev/null || chmod +x warp 2>/dev/null || true
+        # If unzip produced 'warp' instead of 'warp-plus', rename it
+        if [ ! -x "$WARP_BIN" ] && [ -f warp ]; then
+            mv -f warp "$WARP_BIN"
+            chmod +x "$WARP_BIN"
+        fi
         rm -f warp.zip README.md LICENSE
-        echo "✅ WARP binary ready ($(du -h "$WARP_BIN" 2>/dev/null | cut -f1))"
+        cd /app
+        if [ -x "$WARP_BIN" ]; then
+            echo "✅ WARP binary ready ($(du -h "$WARP_BIN" | cut -f1))"
+        else
+            echo "❌ WARP binary missing after unzip — running without proxy"
+            exec python -m melody
+        fi
     fi
 
-    # Start WARP
     echo "🌐 Starting WARP-plus on 127.0.0.1:${WARP_PORT}..."
     "$WARP_BIN" --bind "127.0.0.1:${WARP_PORT}" > /tmp/warp.log 2>&1 &
     WARP_PID=$!
 
-    # Health check (25s)
     WARP_OK=0
     for i in $(seq 1 25); do
         sleep 1
@@ -62,12 +67,11 @@ if [ "${ENABLE_WARP:-0}" = "1" ]; then
         export YTDLP_PROXY="socks5://127.0.0.1:${WARP_PORT}"
     else
         echo "⚠️ WARP not reachable in 25s — running WITHOUT proxy"
-        echo "----- warp.log (last 30) -----"
         tail -30 /tmp/warp.log 2>/dev/null || echo "(no log)"
-        echo "------------------------------"
     fi
 else
     echo "ℹ️ WARP disabled (ENABLE_WARP=${ENABLE_WARP:-0})"
 fi
 
+cd /app
 exec python -m melody
