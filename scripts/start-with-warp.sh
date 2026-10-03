@@ -1,5 +1,4 @@
 #!/bin/bash
-# Start WARP-plus in background, then launch the bot
 set -e
 
 WARP_BIN="/app/vendor/warp-plus/warp-plus"
