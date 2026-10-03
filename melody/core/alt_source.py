@@ -133,8 +133,69 @@ def clean_title(title: str) -> str:
     return re.sub(r"\s+", " ", t).strip()
 
 
+# ── Devanagari -> Latin (rough) ──────────────────────────────────────────
+# ROOT-CAUSE FIX for "YouTube bot-check + no alt match" on Marathi/Hindi
+# titles like 'पाहिले ना मी तुला(Pahile Na Me Tula) | Marathi ...':
+# clean_title() threw away the bracketed Latin name and searched JioSaavn in
+# Devanagari, while JioSaavn's catalogue (and the score check) is Latin, so
+# the first-word check always failed. We now transliterate both sides and
+# try several query variants (bracketed Latin name, translit, song core).
+_DEV_CONS = {
+    "क": "k", "ख": "kh", "ग": "g", "घ": "gh", "ङ": "n", "च": "ch", "छ": "chh",
+    "ज": "j", "झ": "jh", "ञ": "n", "ट": "t", "ठ": "th", "ड": "d", "ढ": "dh",
+    "ण": "n", "त": "t", "थ": "th", "द": "d", "ध": "dh", "न": "n", "प": "p",
+    "फ": "ph", "ब": "b", "भ": "bh", "म": "m", "य": "y", "र": "r", "ल": "l",
+    "ळ": "l", "व": "v", "श": "sh", "ष": "sh", "स": "s", "ह": "h", "क़": "q",
+    "ख़": "kh", "ग़": "g", "ज़": "z", "ड़": "d", "ढ़": "dh", "फ़": "f",
+}
+_DEV_VOW = {
+    "अ": "a", "आ": "aa", "इ": "i", "ई": "ee", "उ": "u", "ऊ": "oo", "ऋ": "ri",
+    "ए": "e", "ऐ": "ai", "ओ": "o", "औ": "au", "ऑ": "o",
+}
+_DEV_MATRA = {
+    "ा": "aa", "ि": "i", "ी": "ee", "ु": "u", "ू": "oo", "ृ": "ri", "े": "e",
+    "ै": "ai", "ो": "o", "ौ": "au", "ॉ": "o", "ॅ": "e",
+}
+_DEV_RE = re.compile(r"[\u0900-\u097f]")
+
+
+def translit(text: str) -> str:
+    """'पाहिले ना मी तुला' -> 'paahile naa mee tulaa'. Non-Devanagari passes through."""
+    if not text or not _DEV_RE.search(text):
+        return text or ""
+    out = []
+    chars = list(text)
+    for i, ch in enumerate(chars):
+        nxt = chars[i + 1] if i + 1 < len(chars) else ""
+        if ch in _DEV_CONS:
+            out.append(_DEV_CONS[ch])
+            if nxt in _DEV_MATRA or nxt == "्" or nxt == "़":
+                continue
+            # inherent 'a', dropped at word end (schwa deletion)
+            if nxt and (_DEV_RE.match(nxt) and nxt not in "ंँः।"):
+                out.append("a")
+            elif nxt in "ंँ":
+                out.append("a")
+        elif ch in _DEV_VOW:
+            out.append(_DEV_VOW[ch])
+        elif ch in _DEV_MATRA:
+            out.append(_DEV_MATRA[ch])
+        elif ch in "ंँ":
+            out.append("n")
+        elif ch in "़्ः":
+            continue
+        elif ch == "।":
+            out.append(" ")
+        elif "\u0966" <= ch <= "\u096f":
+            out.append(str(ord(ch) - 0x966))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 def _tokens(text: str) -> set:
-    return {w for w in re.findall(r"[a-z0-9\u0900-\u097f]+", (text or "").lower()) if len(w) > 1}
+    text = translit(text or "")
+    return {w for w in re.findall(r"[a-z0-9\u0900-\u097f]+", text.lower()) if len(w) > 1}
 
 
 def _norm_tok(w: str) -> str:
@@ -176,10 +237,10 @@ def _score(query: str, cand_title: str, want_dur: int, cand_dur: int, relaxed: b
     q, c = _tokens(query), _tokens(cand_title)
     if not q or not c:
         return 0.0
-    overlap = _overlap(q, c, cand_title)
+    overlap = _overlap(q, c, translit(cand_title))
     # Song name must match, not just the artist: the first word of the query
     # (always the song title after clean_title) has to be in the candidate.
-    first = next((w for w in re.findall(r"[a-z0-9\u0900-\u097f]+", query.lower()) if len(w) > 1), "")
+    first = next((w for w in re.findall(r"[a-z0-9\u0900-\u097f]+", translit(query).lower()) if len(w) > 1), "")
     if first and not any(_tok_match(first, x) for x in c):
         return 0.0
     min_overlap = 0.34 if relaxed else 0.5
@@ -211,6 +272,40 @@ def song_core(title: str) -> str:
     t = re.sub(r"[#@\"'“”‘’:;,!?/\\]+", " ", t)
     t = re.sub(r"\b(official|video|song|full|audio|lyrical|lyrics|hd|4k)\b", " ", t, flags=re.I)
     return re.sub(r"\s+", " ", t).strip()
+
+
+_LATIN_BRACKET_RE = re.compile(r"[\(\[]([A-Za-z][A-Za-z0-9 '&.-]{2,60})[\)\]]")
+
+
+def query_variants(title: str) -> list:
+    """Ordered, de-duplicated search queries for one YouTube title."""
+    t = (title or "").replace("&amp;", "&")
+    out = []
+    main = (_SPLIT_RE.split(t) or [t])[0]
+    if _DEV_RE.search(main):
+        for m in _LATIN_BRACKET_RE.finditer(t):
+            name = _NOISE_RE.sub(" ", m.group(1))
+            name = re.sub(r"\s+", " ", name).strip()
+            if len(_tokens(name)) >= 1:
+                out.append(name)
+                break
+    ct = clean_title(t)
+    out.append(ct)
+    if _DEV_RE.search(ct):
+        out.append(translit(ct))
+    core = song_core(t)
+    if core:
+        out.append(core)
+        if _DEV_RE.search(core):
+            out.append(translit(core))
+    seen, res = set(), []
+    for q in out:
+        q = re.sub(r"\s+", " ", q or "").strip()
+        k = q.lower()
+        if q and k not in seen and len(_tokens(q)) >= 1:
+            seen.add(k)
+            res.append(q)
+    return res[:4]
 
 
 def _good_enough(score: float, want_dur: int) -> bool:
@@ -412,9 +507,10 @@ async def fetch_alternative_audio(
     """
     if not enabled() or not title or title == "Unknown":
         return None
-    query = clean_title(title)
-    if len(_tokens(query)) < 1:
+    variants = query_variants(title)
+    if not variants:
         return None
+    query = variants[0]
     want_dur = int(duration or 0)
     if want_dur and want_dur > int(os.getenv("ALT_MAX_DURATION", "7200")):
         return None  # mixes / jukeboxes / podcasts — no sane single-track match
@@ -435,13 +531,19 @@ async def fetch_alternative_audio(
             await asyncio.sleep(stagger * idx)
         if cancel_event is not None and cancel_event.is_set():
             return None
-        try:
-            path = await fn(query, want_dur, final_base, cancel_event, relaxed=_relaxed)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001
-            LOGGER.info("alt/%s failed for %s: %s", name, video_id, str(exc)[:200])
-            return None
+        path = None
+        for q in variants:
+            if cancel_event is not None and cancel_event.is_set():
+                return None
+            try:
+                path = await fn(q, want_dur, final_base, cancel_event, relaxed=_relaxed)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.info("alt/%s failed for %s (%r): %s", name, video_id, q[:40], str(exc)[:200])
+                path = None
+            if path:
+                break
         if path:
             LOGGER.info("✅ alt source %s supplied %s in %.2fs", name, video_id,
                         time.monotonic() - started)
@@ -464,8 +566,8 @@ async def fetch_alternative_audio(
     # noise-word stripping). This catches songs where clean_title() removed
     # a key word or the alt-source catalogue uses a slightly different name.
     if not _relaxed and os.getenv("ALT_RELAXED_RETRY", "1").strip().lower() not in {"0", "false", "no", "off"}:
-        core = song_core(title)
-        if core and len(_tokens(core)) >= 1 and clean_title(core) != query:
+        core = variants[0] if _DEV_RE.search(title or "") else song_core(title)
+        if core and len(_tokens(core)) >= 1:
             LOGGER.info("🔄 alt source relaxed retry for %s with song-name query %r", video_id, core[:60])
             return await fetch_alternative_audio(
                 video_id, tag, core, uploader, duration, cancel_event,
