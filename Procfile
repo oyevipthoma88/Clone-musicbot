@@ -1,1 +1,1 @@
-worker: MALLOC_ARENA_MAX=2 python -m melody
+worker: bash scripts/start-with-warp.sh
