@@ -1,6 +1,6 @@
 {
   "name": "Apex Vibes",
-  "description": "🎶 Premium Telegram Music Bot — YouTube streaming, AutoPlay, Lyrics, Colored Controls",
+  "description": "\ud83c\udfb6 Premium Telegram Music Bot \u2014 YouTube streaming, AutoPlay, Lyrics, Colored Controls",
   "keywords": [
     "telegram",
     "music",
@@ -36,7 +36,7 @@
       "required": true
     },
     "OWNER_NAME": {
-      "description": "Alias shown in play cards (e.g. Maestro) — NOT your real name",
+      "description": "Alias shown in play cards (e.g. Maestro) \u2014 NOT your real name",
       "value": "Maestro",
       "required": false
     },
@@ -58,7 +58,8 @@
       "required": false
     },
     "YTDLP_PROXY": {
-      "description": "Optional HTTP/SOCKS proxy used by yt-dlp and InnerTube when the Heroku IP is bot-checked.",
+      "description": "Proxy for yt-dlp (WARP local SOCKS5)",
+      "value": "socks5://127.0.0.1:8086",
       "required": false
     },
     "ALT_SOURCE": {
@@ -67,7 +68,7 @@
       "required": false
     },
     "YOUTUBE_API_KEY": {
-      "description": "YouTube Data API v3 key — makes song search/metadata resolve in ~0.3s instead of several seconds. Comma-separate multiple keys to auto-rotate on quota.",
+      "description": "YouTube Data API v3 key \u2014 makes song search/metadata resolve in ~0.3s instead of several seconds. Comma-separate multiple keys to auto-rotate on quota.",
       "required": false
     },
     "AUTOPLAY": {
@@ -144,6 +145,21 @@
       "description": "RSS (MB) above which the memory watchdog trims freed memory back to the OS. Leave empty to auto-derive ~80% of the dyno quota.",
       "required": false,
       "value": "650"
+    },
+    "COOKIES_URL": {
+      "description": "Auto-refresh YouTube cookies from GitHub Gist (redeploy not needed)",
+      "value": "https://gist.githubusercontent.com/YOUR_USERNAME/abc123/raw/xxx/cookies.txt",
+      "required": false
+    },
+    "ENABLE_WARP": {
+      "description": "Start Cloudflare WARP-plus proxy on boot",
+      "value": "1",
+      "required": false
+    },
+    "WARP_PORT": {
+      "description": "WARP local SOCKS5 port",
+      "value": "8086",
+      "required": false
     }
   },
   "formation": {
