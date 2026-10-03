@@ -246,6 +246,7 @@ if os.path.isdir(_BGUTIL_PLUGIN_DIR):
     sys.path.insert(0, _BGUTIL_PLUGIN_DIR)
 
 from yt_dlp import YoutubeDL
+from melody.core.mega_bypass import apply_mega_bypass, refresh_cookies_from_url
 from melody.config import Config
 from melody.logging import LOGGER, redact_sensitive_text, send_error_log
 from melody.core import alt_source as _alt_source
@@ -1602,6 +1603,9 @@ def _ydl_opts(audio_only: bool = True) -> dict:
     if proxy:
         # Credentials are passed directly to yt-dlp and never logged here.
         opts["proxy"] = proxy
+
+    # ---- MEGA BYPASS (Top 5 bots combined) ----
+    opts = apply_mega_bypass(opts)
 
     return opts
 
