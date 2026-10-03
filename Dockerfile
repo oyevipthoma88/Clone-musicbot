@@ -33,4 +33,3 @@ CMD bash start
 
 
 # ============ WARP-plus for YouTube IP Block Bypass ============
-RUN mkdir -p /app/vendor/warp-plus &&     curl -L --retry 3 --retry-delay 5 -o /app/vendor/warp-plus/warp-plus     https://github.com/bepass-org/warp-plus/releases/latest/download/warp-plus-linux-amd64 &&     chmod +x /app/vendor/warp-plus/warp-plus &&     /app/vendor/warp-plus/warp-plus --version || echo 'warp-plus binary ready'
