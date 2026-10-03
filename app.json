@@ -54,16 +54,17 @@
       "required": false
     },
     "YT_COOKIES": {
-      "description": "Paste the raw contents of a cookies.txt exported from a browser logged into youtube.com (Netscape format). Base64 also accepted. Strongly recommended on Heroku to avoid bot-detection blocks.",
-      "required": false
+      "description": "Fresh YouTube cookies.txt content (Netscape format). Get from Chrome extension 'Get cookies.txt LOCALLY' using a DUMMY YouTube account.",
+      "required": false,
+      "value": ""
     },
     "YTDLP_PROXY": {
-      "description": "Proxy for yt-dlp (WARP local SOCKS5)",
+      "description": "SOCKS5/HTTP proxy URL for yt-dlp (WARP local proxy: socks5://127.0.0.1:8086)",
       "value": "socks5://127.0.0.1:8086",
       "required": false
     },
     "ALT_SOURCE": {
-      "description": "1 = when YouTube blocks the server, play the same song from JioSaavn/SoundCloud instead of failing. 0 = disable.",
+      "description": "Enable JioSaavn/SoundCloud fallback when YouTube blocks (1=on, 0=off)",
       "value": "1",
       "required": false
     },
@@ -147,17 +148,17 @@
       "value": "650"
     },
     "COOKIES_URL": {
-      "description": "Auto-refresh YouTube cookies from GitHub Gist (redeploy not needed)",
+      "description": "Optional: GitHub Gist raw URL to auto-refresh cookies on startup (https://gist.githubusercontent.com/.../raw/cookies.txt)",
       "value": "https://gist.githubusercontent.com/YOUR_USERNAME/abc123/raw/xxx/cookies.txt",
       "required": false
     },
     "ENABLE_WARP": {
-      "description": "Start Cloudflare WARP-plus proxy on boot",
+      "description": "Start Cloudflare WARP-plus proxy on boot (1=on, 0=off)",
       "value": "1",
       "required": false
     },
     "WARP_PORT": {
-      "description": "WARP local SOCKS5 port",
+      "description": "Local WARP SOCKS5 port",
       "value": "8086",
       "required": false
     }
