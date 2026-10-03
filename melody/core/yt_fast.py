@@ -7,6 +7,33 @@ from difflib import SequenceMatcher
 
 LOGGER = logging.getLogger(__name__)
 
+def _clean_title(title: str) -> str:
+    """YouTube title se noise hatakar clean query banao."""
+    import re
+    if not title:
+        return ""
+    t = title
+    # Brackets/parenthesis content hatao
+    t = re.sub(r'[\(\[][^\)\]]*[\)\]]', ' ', t)
+    # Common noise keywords
+    noise = (r'\b(HD|4K|8K|1080p|720p|480p|360p|BluRay|Blu-Ray|BRRip|'
+             r'WEB-DL|WEBRip|DVDRip|HDRip|PreDVD|Music Video|Official Video|'
+             r'Official Music Video|Lyrical Video|Lyrics Video|Lyrical|Lyrics|'
+             r'Full Video|Full Song|Video Song|Audio Song|Audio|'
+             r'YouTube|Remastered|Remaster|Mp3|MP3|HQ|Full HD|Ultra HD|'
+             r'Theater|Theatre|Print|Version|Edit|Remix|Cover|Live|'
+             r'Video|Song|Music|Ft|Feat|Featuring)\b')
+    t = re.sub(noise, ' ', t, flags=re.IGNORECASE)
+    # Year hatado (2001, 1995, 2024...)
+    t = re.sub(r'\b(19|20)\d{2}\b', ' ', t)
+    # Extra whitespace collapse
+    t = re.sub(r'\s+', ' ', t).strip()
+    # Pehle 5 words hi rakho
+    words = t.split()[:5]
+    return ' '.join(words)
+
+
+
 def build_yt_opts(cookiefile: str = None) -> dict:
     """yt-dlp options — SABR bypass + JS runtime + cookies."""
     opts = {
@@ -81,8 +108,34 @@ async def _jiosaavn_verified(query, yt_title=None):
         for n in ['jiosaavn_stream', 'jiosaavn_get_stream', 'jiosaavn_resolve']:
             if hasattr(alt, n): stream_fn = getattr(alt, n); break
         if not search_fn or not stream_fn: return None
-        results = await search_fn(query, limit=3)
+        
+        # 🎯 MULTI-QUERY: raw + title + cleaned title
+        queries_to_try = []
+        if query: queries_to_try.append(query)
+        if yt_title: queries_to_try.append(yt_title)
+        cleaned = _clean_title(yt_title or query or "")
+        if cleaned: queries_to_try.append(cleaned)
+        # Dedupe
+        seen = set()
+        unique_q = []
+        for q in queries_to_try:
+            ql = q.lower().strip()
+            if ql and ql not in seen:
+                seen.add(ql)
+                unique_q.append(q)
+        
+        results = None
+        used_query = ""
+        for q in unique_q:
+            try:
+                results = await search_fn(q, limit=3)
+                if results:
+                    used_query = q
+                    break
+            except Exception:
+                continue
         if not results: return None
+        LOGGER.debug(f"JioSaavn query used: {used_query!r}")
         if yt_title:
             best, best_score = None, 0
             for r in results:
