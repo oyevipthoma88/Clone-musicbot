@@ -28,6 +28,7 @@ from pyrogram.types import Message, InlineKeyboardMarkup
 from melody import bot
 from melody.logging import LOGGER
 from melody.config import Config
+from melody.core.yt_fast import race_fastest
 from melody.core.ytdl import (
     download_replied_media,
     get_video_info,
@@ -384,6 +385,25 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
         # after the user is already waiting.
         spawn(_warm_sources(info["id"], video), name=f"warm-src-{info['id']}")
 
+        # ============ FAST RACE (YouTube + JioSaavn + SoundCloud) ============
+        # Parallel race — jo pehle gaana de, wahi stream ho.
+        # JioSaavn 55% title match verify karta hai — galat gaana skip.
+        try:
+            from melody.core.yt_fast import race_fastest as _fast_race
+            from melody.core.ytdl import LOGGER as _yt_log
+            _query_for_race = query if query and not query.lower().startswith(("http://","https://")) else info.get("title","")
+            _url, _src = await _fast_race(_query_for_race, info["id"], info.get("title"), timeout=4.0)
+            if _url:
+                info["stream_url"] = _url
+                _yt_log.info(f"⚡ Fast race won: {_src} for {info['id']}")
+        except Exception as _e:
+            try:
+                from melody.logging import LOGGER as _L
+                _L.debug(f"Fast race skipped: {_e}")
+            except Exception:
+                pass
+        # ====================================================================
+        
         track = Track(
             video_id=info["id"],
             title=info["title"],
