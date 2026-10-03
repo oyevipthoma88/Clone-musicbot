@@ -14,6 +14,7 @@ import pkgutil
 import platform
 import uvloop
 from melody.logging import LOGGER
+from melody.core.mega_bypass import refresh_cookies_from_url
 from melody.config import Config
 from utils.database import get_all_chats
 from utils.tasks import spawn
@@ -604,7 +605,13 @@ async def main():
     from melody import bot, assistant
     from melody.core.call import recover_playback, start_call_py
 
-    LOGGER.info("Starting Apex Vibes...")
+        # Auto-refresh cookies from COOKIES_URL if set
+    try:
+        await refresh_cookies_from_url()
+    except Exception as _e:
+        LOGGER.warning(f"Cookie auto-refresh skipped: {_e}")
+
+LOGGER.info("Starting Apex Vibes...")
 
     await bot.start()
     LOGGER.info("Bot client started.")
