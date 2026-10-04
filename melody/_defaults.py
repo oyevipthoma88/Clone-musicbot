@@ -1,33 +1,26 @@
 """
-Hardcoded defaults — sab Heroku config vars code me hi set.
-__main__.py me sabse pehle import hota hai.
+Hardcoded defaults — JioSaavn-primary mode (YouTube SABR-block bypass).
 """
 import os
 
 _DEFAULTS = {
-    "COOKIES_URL": "https://gist.githubusercontent.com/oyevipthoma88/5b705bfdd3239d9d10905714b2b24f66/raw/cookies.txt",
-    # Timeouts
-    "DOWNLOAD_HARD_TIMEOUT": "5",   # 15s yt-dlp cap → Worker rescue
-    "PLAY_START_BUDGET": "12",       # call.py ka 25s budget
-    "RESOLVE_TIMEOUT": "3.0",
-    "DIRECT_RESOLVE_MAX": "3.5",
+    # ═══ Core timing (JioSaavn 1-2s me kaam karta hai) ═══
+    "DOWNLOAD_HARD_TIMEOUT": "4",       # yt-dlp cap 4s
+    "PLAY_START_BUDGET": "12",           # call.py budget
 
-    # Cloudflare Worker proxy (clean IP for YouTube)
-    "YT_WORKER_URL": "https://yt-proxy.flirtingzero.workers.dev",
-
-    # Direct stream band — WARP IP-lock ki wajah se 403 aata hai
+    # ═══ Disable YouTube-specific hacks (SABR wall) ═══
+    "USE_WARP": "false",                 # WARP nahi chahiye
+    "ENABLE_WARP": "0",
     "DIRECT_STREAM": "true",
     "DISABLE_DIRECT_STREAM": "0",
     "PROXY_DIRECT_STREAM": "false",
+    "YT_WORKER_URL": "",                 # Worker off
+    "COOKIES_URL": "",                   # Gist fetch off (JioSaavn cookies nahi chahiye)
 
-    # WARP (Melody-style userspace wireproxy)
-    "USE_WARP": "false",
-    "ENABLE_WARP": "0",              # purana warp-plus off (UDP fail)
-    "WARP_IPV6": "false",            # IPv6 YouTube pe flagged hai
-    "WARP_PROXY_PORT": "40001",
-
-    # Clients — kam-flagged
+    # ═══ yt-dlp — sirf metadata extraction ke liye ═══
     "YT_PLAYER_CLIENTS": "tv,mweb",
+    "RESOLVE_TIMEOUT": "2.5",
+    "DIRECT_RESOLVE_MAX": "3.0",
 }
 
 for _k, _v in _DEFAULTS.items():

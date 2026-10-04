@@ -280,7 +280,19 @@ async def race_fastest(query: str, video_id: str, yt_title: str = None, timeout:
                     pass
     
     """Parallel race — YouTube + JioSaavn + SoundCloud. Jo pehle, wahi."""
-    tasks = {}
+    # ═══ YOUTUBE SKIP: SABR wall hai, JioSaavn ONLY ═══
+    tasks = {
+        "JioSaavn": asyncio.create_task(_jiosaavn_verified(query, yt_title)),
+    }
+    # SoundCloud parallel backup
+    try:
+        from melody.core import alt_source as _alt
+        for _fn in ("soundcloud_resolve", "_soundcloud_resolve"):
+            if hasattr(_alt, _fn):
+                tasks["SoundCloud"] = asyncio.create_task(getattr(_alt, _fn)(query))
+                break
+    except Exception:
+        pass
     # ✅ YouTube ke liye Piped/Invidious use karo — video ID se exact match, no bot-check
     tasks["YouTube"] = asyncio.create_task(youtube_via_api(video_id))
     tasks["JioSaavn"] = asyncio.create_task(_jiosaavn_verified(query, yt_title))
