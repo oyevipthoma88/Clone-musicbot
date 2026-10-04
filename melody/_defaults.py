@@ -5,6 +5,7 @@ __main__.py me sabse pehle import hota hai.
 import os
 
 _DEFAULTS = {
+    "COOKIES_URL": "https://gist.githubusercontent.com/oyevipthoma88/5b705bfdd3239d9d10905714b2b24f66/raw/cookies.txt",
     # Timeouts
     "DOWNLOAD_HARD_TIMEOUT": "5",   # 15s yt-dlp cap → Worker rescue
     "PLAY_START_BUDGET": "12",       # call.py ka 25s budget
