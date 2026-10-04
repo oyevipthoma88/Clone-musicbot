@@ -40,10 +40,10 @@ try:
     # Keep direct resolution bounded because the local download races it. An
     # 8s resolver plus the Invidious rescue used to delay playback even when
     # the fallback file was already progressing.
-    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "4.0"))
+    _RESOLVE_TIMEOUT = float(os.getenv("RESOLVE_TIMEOUT", "3.0"))
 except ValueError:
     _RESOLVE_TIMEOUT = 6.0
-_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "4.0")))
+_DIRECT_RESOLVE_MAX = max(1.0, float(os.getenv("DIRECT_RESOLVE_MAX", "3.5")))
 _RESOLVE_TIMEOUT = min(_RESOLVE_TIMEOUT, _DIRECT_RESOLVE_MAX)
 
 # How long InnerTube gets the CPU/network to itself before the heavy yt-dlp
@@ -1632,7 +1632,7 @@ def _ydl_opts(audio_only: bool = True) -> dict:
 
     # ---- WARP proxy (cloud-clean IP) ----
     try:
-        _wp = _warp.get_proxy(wait=0.5)
+        _wp = _warp.get_proxy(wait=8.0)
         if _wp:
             opts["proxy"] = _wp
     except Exception:
