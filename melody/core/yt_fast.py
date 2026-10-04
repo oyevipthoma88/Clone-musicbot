@@ -81,10 +81,16 @@ def build_yt_opts(cookiefile: str = None) -> dict:
 
 
 async def fast_youtube(video_id: str) -> str | None:
-    """YouTube se direct audio URL nikalo — fast."""
+    """YouTube se direct audio URL nikalo — 2s max timeout."""
     from yt_dlp import YoutubeDL
+    # ✅ Short timeout: YouTube block hai to jaldi fail, JioSaavn ko jeetne do
     try:
-        with YoutubeDL(build_yt_opts()) as ydl:
+        opts = build_yt_opts()
+        opts["socket_timeout"] = 4
+        opts["retries"] = 1
+        opts["extractor_retries"] = 1
+        opts["fragment_retries"] = 1
+        with YoutubeDL(opts) as ydl:
             info = ydl.extract_info(f"https://youtube.com/watch?v={video_id}", download=False)
             for fmt in info.get("formats", []):
                 if fmt.get("acodec") != "none" and fmt.get("vcodec") == "none":
@@ -176,10 +182,19 @@ async def race_fastest(query: str, video_id: str, yt_title: str = None, timeout:
                     pass
     
     """Parallel race — YouTube + JioSaavn + SoundCloud. Jo pehle, wahi."""
-    tasks = {
-        "YouTube": asyncio.create_task(fast_youtube(video_id)),
-        "JioSaavn": asyncio.create_task(_jiosaavn_verified(query, yt_title)),
-    }
+    tasks = {}
+    # ✅ YouTube ko skip karo agar block flag active hai (5-7s bachta hai)
+    _skip_yt = False
+    try:
+        from melody.core import alt_source as _alt
+        _skip_yt = _alt.youtube_blocked()
+    except Exception:
+        pass
+    if not _skip_yt:
+        tasks["YouTube"] = asyncio.create_task(fast_youtube(video_id))
+    else:
+        LOGGER.info("⚡ YouTube block flag ON — skipping YT in race")
+    tasks["JioSaavn"] = asyncio.create_task(_jiosaavn_verified(query, yt_title))
     try:
         from melody.core import alt_source as alt
         for n in ['soundcloud_resolve', '_soundcloud_resolve']:
