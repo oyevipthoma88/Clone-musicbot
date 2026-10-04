@@ -4083,6 +4083,41 @@ async def download_replied_media(client, message, video: bool = False) -> "dict 
     return _tg_media_info(media, message, vid)
 
 
+async def _safe_shield(fut, video_id: str, timeout: float = 15.0):
+    """Wrap asyncio.shield with hard timeout → Worker rescue on hang."""
+    try:
+        return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
+    except asyncio.TimeoutError:
+        LOGGER.warning(
+            "#download download_audio hung >%.1fs for %s — Worker rescue",
+            timeout, video_id,
+        )
+        try:
+            from melody.core import worker_proxy as _wp
+            if _wp.info().get("enabled"):
+                _wk = await _wp.resolve(video_id)
+                if _wk:
+                    LOGGER.info("⚡ Worker resolved %s: %s...", video_id, _wk[:60])
+                    import tempfile as _tf
+                    _d = _tf.mkdtemp(prefix="melody-wk-")
+                    _o = dict(_ydl_opts(audio_only=True))
+                    _o["outtmpl"] = os.path.join(_d, "%(id)s.%(ext)s")
+                    for _k in ("progress_hooks", "source_address", "proxy", "cookiefile"):
+                        _o.pop(_k, None)
+                    _o["retries"] = 2
+                    def _wk_dl():
+                        with YoutubeDL(_o) as _y:
+                            _i = _y.extract_info(_wk, download=True)
+                            return _y.prepare_filename(_i)
+                    _p = await asyncio.get_running_loop().run_in_executor(YTDL_POOL, _wk_dl)
+                    if _p and os.path.exists(_p):
+                        LOGGER.info("✅ Worker rescued after hang: %s", os.path.basename(_p))
+                        return _p
+        except Exception as _we:
+            LOGGER.warning("Worker rescue failed: %s", _we)
+        raise
+
+
 async def download_audio(
     video_id: str, audio_only: bool = True, priority: int = 0, owner=None,
     allow_early: bool = False,
@@ -4274,7 +4309,7 @@ async def download_audio(
                         task.cancel()
         # === JIOSAAVN_RESCUE_V2 (catch YT bot-check, use JioSaavn) ===
     try:
-        return await asyncio.shield(fut)
+        return await _safe_shield(fut, video_id, timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")))
     except Exception as _yt_err:
         _emsg = str(_yt_err).lower()
         if any(x in _emsg for x in (
@@ -4335,7 +4370,7 @@ async def download_audio(
             for task in (ready_task, future_task):
                 if not task.done():
                     task.cancel()
-    return await asyncio.shield(fut)
+    return await _safe_shield(fut, video_id, timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")))
 
 
 async def wait_for_download(video_id: str, audio_only: bool = True,
