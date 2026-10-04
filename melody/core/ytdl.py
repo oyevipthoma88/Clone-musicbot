@@ -1604,8 +1604,27 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # Credentials are passed directly to yt-dlp and never logged here.
         opts["proxy"] = proxy
 
-    # ---- MEGA BYPASS (Top 5 bots combined) ----
-    opts = apply_mega_bypass(opts)
+    # ---- SMART BYPASS: fast fail when YouTube is blocked ----
+    # Agar YouTube already marked blocked hai, to retries/JS runtime skip karo
+    # warna yt-dlp 5-6 second waste karega before falling to JioSaavn
+    try:
+        from melody.core import alt_source as _alt
+        _yt_blocked = _alt.youtube_blocked()
+    except Exception:
+        _yt_blocked = False
+    
+    if _yt_blocked:
+        # FAST FAIL: minimal retries, no JS overhead
+        opts["retries"] = 1
+        opts["fragment_retries"] = 1
+        opts["extractor_retries"] = 1
+        opts["socket_timeout"] = 4
+        opts.pop("remote_components", None)
+        opts.pop("js_runtimes", None)
+        opts.pop("http_chunk_size", None)
+    else:
+        # Full bypass when YouTube might work
+        opts = apply_mega_bypass(opts)
 
     return opts
 
