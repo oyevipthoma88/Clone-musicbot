@@ -155,6 +155,26 @@ async def _jiosaavn_verified(query, yt_title=None):
 
 
 async def race_fastest(query: str, video_id: str, yt_title: str = None, timeout: float = 6.0):
+    # PRIORITY: JioSaavn first when YouTube is blocked
+    try:
+        from melody.core import alt_source as _alt
+        _yt_blocked = _alt.youtube_blocked()
+    except Exception:
+        _yt_blocked = False
+    
+    if _yt_blocked:
+        # Skip YouTube entirely — go straight to alt sources
+        from melody.core import alt_source as alt
+        for fn_name in ['jiosaavn_search', 'jiosaavn_resolve']:
+            if hasattr(alt, fn_name):
+                try:
+                    r = await getattr(alt, fn_name)(query)
+                    if isinstance(r, str) and r.startswith('http'):
+                        LOGGER.info("⚡ JioSaavn (fast-path, YT blocked)")
+                        return r, "JioSaavn"
+                except Exception:
+                    pass
+    
     """Parallel race — YouTube + JioSaavn + SoundCloud. Jo pehle, wahi."""
     tasks = {
         "YouTube": asyncio.create_task(fast_youtube(video_id)),
