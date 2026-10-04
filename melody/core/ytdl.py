@@ -4260,7 +4260,42 @@ async def download_audio(
                 for task in (ready_task, future_task):
                     if not task.done():
                         task.cancel()
+        # === JIOSAAVN_RESCUE_V2 (catch YT bot-check, use JioSaavn) ===
+    try:
         return await asyncio.shield(fut)
+    except Exception as _yt_err:
+        _emsg = str(_yt_err).lower()
+        if any(x in _emsg for x in (
+            "sign in to confirm", "403", "forbidden",
+            "not a bot", "unavailable", "requested format", "no alt match",
+        )):
+            LOGGER.warning(f"YT blocked for {video_id} → JioSaavn rescue")
+            try:
+                import sys as _sys, os as _os
+                _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
+                from melody.core.yt_fast import _jiosaavn_direct as _jsd
+                _alt = await _jsd(video_id, None)
+                if _alt:
+                    import tempfile as _tf
+                    _td = _tf.mkdtemp(prefix="melody-sav-")
+                    _opts = dict(_ydl_opts(audio_only=audio_only))
+                    _opts["outtmpl"] = _os.path.join(_td, "%(id)s.%(ext)s")
+                    _opts.pop("progress_hooks", None)
+                    _opts.pop("source_address", None)
+                    def _dl_sav():
+                        from yt_dlp import YoutubeDL as _YDL
+                        with _YDL(_opts) as _y:
+                            _i = _y.extract_info(_alt, download=True)
+                            return _y.prepare_filename(_i)
+                    _fp = await asyncio.get_running_loop().run_in_executor(YTDL_POOL, _dl_sav)
+                    if _fp and _os.path.exists(_fp):
+                        LOGGER.info(f"✅ JioSaavn rescue OK: {_os.path.basename(_fp)}")
+                        return _fp
+            except Exception as _sav_err:
+                LOGGER.warning(f"JioSaavn rescue failed: {_sav_err}")
+        raise
+    # === END RESCUE ===
+
 
     cancel_event = threading.Event()
     _download_cancel_events[dedup_key] = (cancel_event, owner, int(priority))
