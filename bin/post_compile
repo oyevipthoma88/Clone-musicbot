@@ -203,3 +203,18 @@ PY
     echo "       ⚠️ static ffmpeg download failed; falling back to the apt build (LD_LIBRARY_PATH repaired at boot)"
   fi
 fi
+
+# ── WARP: wgcf + wireproxy (userspace Cloudflare WARP) ──
+WARP_DIR="$BUILD_DIR/vendor/warp"
+mkdir -p "$WARP_DIR"
+echo "-----> Installing wgcf + wireproxy (Cloudflare WARP userspace)"
+curl -fsSL --retry 5 --retry-all-errors \
+  "https://github.com/ViRb3/wgcf/releases/download/v2.3.0/wgcf_2.3.0_linux_amd64" \
+  -o "$WARP_DIR/wgcf" && chmod +x "$WARP_DIR/wgcf" \
+  || echo "       WARN wgcf download failed; runtime retry"
+{ curl -fsSL --retry 5 --retry-all-errors \
+    "https://github.com/windtf/wireproxy/releases/latest/download/wireproxy_linux_amd64.tar.gz" \
+  || curl -fsSL --retry 5 --retry-all-errors \
+    "https://github.com/whyvl/wireproxy/releases/latest/download/wireproxy_linux_amd64.tar.gz"; } \
+  | tar -xz -C "$WARP_DIR" wireproxy && chmod +x "$WARP_DIR/wireproxy" \
+  || echo "       WARN wireproxy download failed; runtime retry"

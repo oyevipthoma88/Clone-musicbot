@@ -246,6 +246,7 @@ if os.path.isdir(_BGUTIL_PLUGIN_DIR):
     sys.path.insert(0, _BGUTIL_PLUGIN_DIR)
 
 from yt_dlp import YoutubeDL
+from melody.core import warp as _warp
 from melody.core.mega_bypass import apply_mega_bypass, refresh_cookies_from_url
 from melody.config import Config
 from melody.logging import LOGGER, redact_sensitive_text, send_error_log
