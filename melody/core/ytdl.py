@@ -4460,7 +4460,64 @@ async def _run_download_job(
             _download_early_states.pop(dedup_key, None)
 
 
+# ═══ HARD TIMEOUT WRAPPER: 15s cap → Worker rescue on hang ═══
 async def _download_audio_impl(
+    video_id: str, audio_only: bool, tag: str, priority: int = 0,
+    requested_at: float | None = None,
+    cancel_event: "threading.Event | None" = None,
+    early_state: _EarlyDownloadState | None = None,
+) -> str:
+    """Wraps _download_audio_impl_orig with a hard timeout.
+
+    YT + WARP combination can hang for 60-100s (never fails). This kills
+    the hang after DOWNLOAD_HARD_TIMEOUT (default 15s) and triggers the
+    Cloudflare Worker rescue path.
+    """
+    _ht = float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0"))
+    try:
+        return await asyncio.wait_for(
+            _download_audio_impl_orig(
+                video_id, audio_only, tag, priority,
+                requested_at=requested_at,
+                cancel_event=cancel_event,
+                early_state=early_state,
+            ),
+            timeout=_ht,
+        )
+    except asyncio.TimeoutError:
+        LOGGER.warning(
+            "#download _download_audio_impl hung >%.1fs for %s — Worker rescue",
+            _ht, video_id,
+        )
+        # Worker rescue
+        try:
+            from melody.core import worker_proxy as _wp
+            if _wp.info().get("enabled"):
+                _wk = await _wp.resolve(video_id)
+                if _wk:
+                    LOGGER.info("⚡ Worker resolved %s: %s...", video_id, _wk[:60])
+                    import tempfile as _tf
+                    _d = _tf.mkdtemp(prefix="melody-wk-")
+                    _o = dict(_ydl_opts(audio_only=audio_only))
+                    _o["outtmpl"] = os.path.join(_d, "%(id)s.%(ext)s")
+                    for _k in ("progress_hooks", "source_address", "proxy", "cookiefile"):
+                        _o.pop(_k, None)
+                    _o["retries"] = 2
+                    def _wk_dl():
+                        with YoutubeDL(_o) as _y:
+                            _i = _y.extract_info(_wk, download=True)
+                            return _y.prepare_filename(_i)
+                    _p = await asyncio.get_running_loop().run_in_executor(YTDL_POOL, _wk_dl)
+                    if _p and os.path.exists(_p):
+                        LOGGER.info("✅ Worker rescued: %s", os.path.basename(_p))
+                        return _p
+        except Exception as _we:
+            LOGGER.warning("Worker rescue failed: %s", _we)
+        raise
+# ═══ END WRAPPER ═══
+
+
+async def _download_audio_impl_orig(
     video_id: str, audio_only: bool, tag: str, priority: int = 0,
     requested_at: float | None = None,
     cancel_event: "threading.Event | None" = None,

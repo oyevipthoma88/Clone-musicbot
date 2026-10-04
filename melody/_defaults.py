@@ -6,6 +6,8 @@ __main__.py me sabse pehle import hota hai.
 import os
 
 _DEFAULTS = {
+    "DOWNLOAD_HARD_TIMEOUT": "15",
+    "PLAY_START_BUDGET": "25",
     "YT_WORKER_URL": "https://yt-proxy.flirtingzero.workers.dev",
     # Direct stream band — WARP IP-lock ki wajah se 403 aata hai
     "DIRECT_STREAM": "false",
