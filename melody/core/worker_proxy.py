@@ -6,7 +6,7 @@ import os, re, json, logging
 from urllib.parse import quote, unquote
 
 LOGGER = logging.getLogger(__name__)
-WORKER = os.getenv("YT_WORKER_URL", "").strip().rstrip("/")
+WORKER = os.getenv("YT_WORKER_URL", "https://yt-proxy.flirtingzero.workers.dev").strip().rstrip("/")
 
 
 def wrap(url: str) -> str:

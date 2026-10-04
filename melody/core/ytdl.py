@@ -4094,10 +4094,15 @@ async def _safe_shield(fut, video_id: str, timeout: float = 15.0):
         )
         try:
             from melody.core import worker_proxy as _wp
-            if _wp.info().get("enabled"):
-                _wk = await _wp.resolve(video_id)
+            _wp_info = _wp.info()
+            LOGGER.info("Worker info: %s", _wp_info)
+            if not _wp_info.get("enabled"):
+                LOGGER.warning("Worker DISABLED (url empty) — cannot rescue")
+            else:
+                LOGGER.info("Worker enabled, resolving %s ...", video_id)
+                _wk = await asyncio.wait_for(_wp.resolve(video_id), timeout=10.0)
                 if _wk:
-                    LOGGER.info("⚡ Worker resolved %s: %s...", video_id, _wk[:60])
+                    LOGGER.info("⚡ Worker resolved %s: %s...", video_id, _wk[:80])
                     import tempfile as _tf
                     _d = _tf.mkdtemp(prefix="melody-wk-")
                     _o = dict(_ydl_opts(audio_only=True))
@@ -4109,10 +4114,18 @@ async def _safe_shield(fut, video_id: str, timeout: float = 15.0):
                         with YoutubeDL(_o) as _y:
                             _i = _y.extract_info(_wk, download=True)
                             return _y.prepare_filename(_i)
-                    _p = await asyncio.get_running_loop().run_in_executor(YTDL_POOL, _wk_dl)
+                    _p = await asyncio.wait_for(
+                        asyncio.get_running_loop().run_in_executor(YTDL_POOL, _wk_dl),
+                        timeout=15.0,
+                    )
                     if _p and os.path.exists(_p):
                         LOGGER.info("✅ Worker rescued after hang: %s", os.path.basename(_p))
                         return _p
+                    LOGGER.warning("Worker download produced no file")
+                else:
+                    LOGGER.warning("Worker resolve returned None for %s", video_id)
+        except asyncio.TimeoutError:
+            LOGGER.warning("Worker rescue TIMEOUT for %s", video_id)
         except Exception as _we:
             LOGGER.warning("Worker rescue failed: %s", _we)
         raise
