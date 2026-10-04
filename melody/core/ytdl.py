@@ -1627,6 +1627,14 @@ def _ydl_opts(audio_only: bool = True) -> dict:
         # Full bypass when YouTube might work
         opts = apply_mega_bypass(opts)
 
+    # ---- WARP proxy (cloud-clean IP) ----
+    try:
+        _wp = _warp.get_proxy(wait=0.5)
+        if _wp:
+            opts["proxy"] = _wp
+    except Exception:
+        pass
+
     return opts
 
 
