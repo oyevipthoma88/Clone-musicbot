@@ -99,7 +99,9 @@ def apply_mega_bypass(opts: dict) -> dict:
     # Layer 2: Multi-client fallback (LyriFusion + VenomMusic)
     ea = opts.setdefault("extractor_args", {})
     yt = ea.setdefault("youtube", {})
-    yt["player_client"] = ["tv", "mweb", "web", "ios"]
+    # ✅ DON'T override existing player_client — ytdl.py ka original config working hai
+    if "player_client" not in yt:
+        yt["player_client"] = ["web_safari", "android_vr"]
     yt.setdefault("player_skip", ["webpage", "configs"])
     yt.setdefault("skip", ["hls", "dash"])
 

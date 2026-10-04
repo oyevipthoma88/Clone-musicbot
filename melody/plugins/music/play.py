@@ -392,7 +392,7 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
             from melody.core.yt_fast import race_fastest as _fast_race
             from melody.core.ytdl import LOGGER as _yt_log
             _query_for_race = query if query and not query.lower().startswith(("http://","https://")) else info.get("title","")
-            _url, _src = await _fast_race(_query_for_race, info["id"], info.get("title"), timeout=4.0)
+            _url, _src = await _fast_race(_query_for_race, info["id"], info.get("title"), timeout=2.0)
             if _url:
                 info["stream_url"] = _url
                 _yt_log.info(f"⚡ Fast race won: {_src} for {info['id']}")
