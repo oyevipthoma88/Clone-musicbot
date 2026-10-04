@@ -7,6 +7,96 @@ from difflib import SequenceMatcher
 
 LOGGER = logging.getLogger(__name__)
 
+# ============================================================
+# PIPED / INVIDIOUS RESOLVER (YouTube video ID se direct audio)
+# ============================================================
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.ducks.party",
+    "https://api.piped.private.coffee",
+]
+
+INVIDIOUS_INSTANCES = [
+    "https://yewtu.be",
+    "https://invidious.f5.si",
+    "https://inv.vern.cc",
+    "https://invidious.nerdvpn.de",
+]
+
+async def piped_stream(video_id: str) -> str | None:
+    """Piped API se direct audio stream URL nikalo (video ID se exact match)."""
+    import aiohttp, asyncio
+    async def try_one(inst):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{inst}/streams/{video_id}",
+                                 timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status != 200: return None
+                    d = await r.json()
+                    for f in d.get("audioStreams", []):
+                        u = f.get("url")
+                        if u and isinstance(u, str) and u.startswith("http"):
+                            return u
+        except Exception:
+            return None
+    results = await asyncio.gather(*[try_one(i) for i in PIPED_INSTANCES],
+                                   return_exceptions=True)
+    for r in results:
+        if isinstance(r, str) and r.startswith("http"):
+            return r
+    return None
+
+
+async def invidious_stream(video_id: str) -> str | None:
+    """Invidious API se direct audio stream URL (video ID se exact match)."""
+    import aiohttp, asyncio
+    async def try_one(inst):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{inst}/api/v1/videos/{video_id}",
+                                 timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status != 200: return None
+                    d = await r.json()
+                    for f in d.get("adaptiveFormats", []):
+                        if str(f.get("type","")).startswith("audio"):
+                            u = f.get("url")
+                            if u and isinstance(u, str) and u.startswith("http"):
+                                return u
+        except Exception:
+            return None
+    results = await asyncio.gather(*[try_one(i) for i in INVIDIOUS_INSTANCES],
+                                   return_exceptions=True)
+    for r in results:
+        if isinstance(r, str) and r.startswith("http"):
+            return r
+    return None
+
+
+async def youtube_via_api(video_id: str) -> str | None:
+    """YouTube audio stream — Piped + Invidious race (video ID se exact match)."""
+    import asyncio
+    tasks = [
+        asyncio.create_task(piped_stream(video_id)),
+        asyncio.create_task(invidious_stream(video_id)),
+    ]
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED, timeout=6)
+        for t in done:
+            try:
+                r = t.result()
+                if r and isinstance(r, str) and r.startswith("http"):
+                    for p in pending: p.cancel()
+                    return r
+            except Exception:
+                pass
+    finally:
+        for t in tasks:
+            if not t.done(): t.cancel()
+    return None
+
+
+
 def _clean_title(title: str) -> str:
     """YouTube title se noise hatakar clean query banao."""
     import re
@@ -183,19 +273,8 @@ async def race_fastest(query: str, video_id: str, yt_title: str = None, timeout:
     
     """Parallel race — YouTube + JioSaavn + SoundCloud. Jo pehle, wahi."""
     tasks = {}
-    # ✅ YouTube skip karo SIRF tab jab audio-only chahiye AUR YouTube blocked ho
-    # /vplay ke liye YouTube ZAROORI hai (video stream sirf YT deta hai)
-    _skip_yt = False
-    if not want_video:
-        try:
-            from melody.core import alt_source as _alt
-            _skip_yt = _alt.youtube_blocked()
-        except Exception:
-            pass
-    if not _skip_yt:
-        tasks["YouTube"] = asyncio.create_task(fast_youtube(video_id))
-    else:
-        LOGGER.info("⚡ YouTube block flag ON — skipping YT (audio-only mode)")
+    # ✅ YouTube ke liye Piped/Invidious use karo — video ID se exact match, no bot-check
+    tasks["YouTube"] = asyncio.create_task(youtube_via_api(video_id))
     tasks["JioSaavn"] = asyncio.create_task(_jiosaavn_verified(query, yt_title))
     try:
         from melody.core import alt_source as alt
