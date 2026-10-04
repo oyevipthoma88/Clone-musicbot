@@ -8,6 +8,8 @@ FIXES:
     on startup instead of crashing the asyncio Task with an unhandled
     ValueError (see _patch_pyrogram_peer_errors docstring).
 """
+from melody import _defaults  # noqa: F401  (hardcoded env defaults)
+
 import asyncio
 import importlib
 import pkgutil
