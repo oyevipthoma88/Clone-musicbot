@@ -4855,9 +4855,32 @@ async def _http_rescue_download(
     # SPEED FIX: when YouTube is bot-walled on this host, the rescue's
     # resolve_stream_urls() call will also fail (all clients return
     # LOGIN_REQUIRED). Skip it entirely and let the alt-source fallback handle it.
+    # ═══ WORKER_PROXY_RESCUE ═══
+    # When YouTube is bot-walled, use Cloudflare Worker to fetch a direct
+    # audio URL from a clean Cloudflare IP (bypasses dyno IP block).
     if _alt_source.youtube_blocked():
-        LOGGER.debug("#download rescue skipped for %s — YouTube bot-walled", video_id)
+        LOGGER.info("#download YT bot-walled for %s → trying Worker", video_id)
+        try:
+            from melody.core import worker_proxy as _wp
+            if _wp.info().get("enabled"):
+                _wk_resolved = await _wp.resolve(video_id)
+                if _wk_resolved:
+                    LOGGER.info("#download Worker URL for %s: %s...", video_id, _wk_resolved[:70])
+                    # Use Worker-wrapped URL for the actual download
+                    audio_url = _wk_resolved
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    return await _worker_rescue_download(
+                        video_id, tag, audio_url, headers,
+                        early_state=early_state, cancel_event=cancel_event,
+                    )
+                else:
+                    LOGGER.info("#download Worker could not resolve %s", video_id)
+        except Exception as _we:
+            LOGGER.info("#download Worker rescue failed for %s: %s", video_id, _we)
+        # Fall through to original bail-out if Worker also failed
+        LOGGER.debug("#download rescue skipped for %s — YouTube bot-walled, Worker failed too", video_id)
         return None
+    # ═══ END WORKER_PROXY_RESCUE ═══
     try:
         urls = await resolve_stream_urls(video_id, want_video=False, force=True)
     except Exception as exc:  # noqa: BLE001
