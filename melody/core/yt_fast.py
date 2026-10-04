@@ -276,6 +276,8 @@ async def race_fastest(query: str, video_id: str, yt_title: str = None, timeout:
     # ✅ YouTube ke liye Piped/Invidious use karo — video ID se exact match, no bot-check
     tasks["YouTube"] = asyncio.create_task(youtube_via_api(video_id))
     tasks["JioSaavn"] = asyncio.create_task(_jiosaavn_verified(query, yt_title))
+    # Last-resort for non-music videos (interviews, podcasts, etc.)
+    tasks["Piped"] = asyncio.create_task(piped_last_resort(video_id))
     try:
         from melody.core import alt_source as alt
         for n in ['soundcloud_resolve', '_soundcloud_resolve']:
@@ -307,3 +309,153 @@ async def race_fastest(query: str, video_id: str, yt_title: str = None, timeout:
         for t in tasks.values():
             if not t.done(): t.cancel()
     return None, None
+
+
+# ============================================================
+# PIPED / INVIDIOUS RESOLVER (YouTube video ID se exact audio)
+# ============================================================
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.ducks.party",
+    "https://api.piped.private.coffee",
+]
+
+INVIDIOUS_INSTANCES = [
+    "https://yewtu.be",
+    "https://invidious.f5.si",
+    "https://inv.vern.cc",
+    "https://invidious.nerdvpn.de",
+]
+
+async def piped_stream(video_id: str):
+    import aiohttp, asyncio
+    async def try_one(inst):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{inst}/streams/{video_id}", timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status != 200: return None
+                    d = await r.json()
+                    for f in d.get("audioStreams", []):
+                        u = f.get("url")
+                        if u and isinstance(u, str) and u.startswith("http"):
+                            return u
+        except Exception:
+            return None
+    results = await asyncio.gather(*[try_one(i) for i in PIPED_INSTANCES], return_exceptions=True)
+    for r in results:
+        if isinstance(r, str) and r.startswith("http"):
+            return r
+    return None
+
+
+async def invidious_stream(video_id: str):
+    import aiohttp, asyncio
+    async def try_one(inst):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{inst}/api/v1/videos/{video_id}", timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status != 200: return None
+                    d = await r.json()
+                    for f in d.get("adaptiveFormats", []):
+                        if str(f.get("type","")).startswith("audio"):
+                            u = f.get("url")
+                            if u and isinstance(u, str) and u.startswith("http"):
+                                return u
+        except Exception:
+            return None
+    results = await asyncio.gather(*[try_one(i) for i in INVIDIOUS_INSTANCES], return_exceptions=True)
+    for r in results:
+        if isinstance(r, str) and r.startswith("http"):
+            return r
+    return None
+
+
+async def youtube_via_api(video_id: str):
+    import asyncio
+    tasks = [
+        asyncio.create_task(piped_stream(video_id)),
+        asyncio.create_task(invidious_stream(video_id)),
+    ]
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED, timeout=6)
+        for t in done:
+            try:
+                r = t.result()
+                if r and isinstance(r, str) and r.startswith("http"):
+                    for p in pending: p.cancel()
+                    return r
+            except Exception:
+                pass
+    finally:
+        for t in tasks:
+            if not t.done(): t.cancel()
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# PIPED / INVIDIOUS — Last-resort YouTube fallback (non-music videos)
+# ═══════════════════════════════════════════════════════════════
+_PIPED = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.ducks.party",
+    "https://api.piped.private.coffee",
+]
+_INV = [
+    "https://yewtu.be",
+    "https://invidious.f5.si",
+    "https://inv.vern.cc",
+    "https://invidious.nerdvpn.de",
+]
+
+async def piped_last_resort(video_id: str):
+    """Piped + Invidious race — non-music videos ke liye."""
+    import aiohttp, asyncio
+    async def p(inst):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{inst}/streams/{video_id}",
+                                 timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status != 200: return None
+                    d = await r.json()
+                    for f in d.get("audioStreams", []):
+                        u = f.get("url")
+                        if u and isinstance(u, str) and u.startswith("http"):
+                            return u
+        except Exception: return None
+        return None
+    async def i(inst):
+        try:
+            async with aiohttp.ClientSession() as s:
+                async with s.get(f"{inst}/api/v1/videos/{video_id}",
+                                 timeout=aiohttp.ClientTimeout(total=5)) as r:
+                    if r.status != 200: return None
+                    d = await r.json()
+                    for f in d.get("adaptiveFormats", []):
+                        if str(f.get("type","")).startswith("audio"):
+                            u = f.get("url")
+                            if u and isinstance(u, str) and u.startswith("http"):
+                                return u
+        except Exception: return None
+        return None
+    tasks = [asyncio.create_task(p(x)) for x in _PIPED] + \
+            [asyncio.create_task(i(x)) for x in _INV]
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED, timeout=8)
+        while done or pending:
+            for t in list(done):
+                try:
+                    r = t.result()
+                    if r and isinstance(r, str) and r.startswith("http"):
+                        for pp in pending: pp.cancel()
+                        return r
+                except Exception: pass
+                done.discard(t)
+            if not pending: break
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED, timeout=3)
+    finally:
+        for t in tasks:
+            if not t.done(): t.cancel()
+    return None
+

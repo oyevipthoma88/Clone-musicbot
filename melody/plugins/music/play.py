@@ -426,14 +426,27 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
         # speculative silence join or a UI round-trip before this point.
         _t_join = _lap()
 
-        if force:
-            playing_now = await force_play_stream(
+        try:
+            if force:
+                playing_now = await force_play_stream(
                 chat.id, track, video=video, prejoin=False,
             )
         else:
-            playing_now = await play_stream(
-                chat.id, track, video=video, prejoin=False,
-            )
+                playing_now = await play_stream(
+                    chat.id, track, video=video, prejoin=False,
+                )
+        except Exception as _play_err:
+            from melody.logging import LOGGER as _L
+            _L.warning(f"Play failed: {_play_err}")
+            try:
+                await message.reply(
+                    "⚠️ <b>Ye video abhi available nahi hai.</b>\n\n"
+                    "Shayad ye non-music video hai (interview, podcast) aur YouTube "
+                    "abhi block kar raha hai.\n\n"
+                    "Try karo: <b>/play koi gaana</b> — JioSaavn se chal jayega 🎵"
+                )
+            except Exception: pass
+            return
         _total_elapsed = _lap()
         _stream_elapsed = max(0.0, _total_elapsed - _t_join) if playing_now else 0.0
         # `play_stream()` returns False for both queueing and a failed handoff.
