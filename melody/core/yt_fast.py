@@ -196,6 +196,14 @@ async def fast_youtube(video_id: str) -> str | None:
 
 async def _jiosaavn_verified(query, yt_title=None):
     """JioSaavn with title verification."""
+    # Try self-contained first
+    try:
+        r = await _jiosaavn_direct(query or yt_title, yt_title)
+        if r:
+            return r
+    except Exception as e:
+        LOGGER.debug(f"Self-sav failed: {e}")
+
     try:
         from melody.core import alt_source as alt
         search_fn = stream_fn = None
@@ -457,5 +465,59 @@ async def piped_last_resort(video_id: str):
     finally:
         for t in tasks:
             if not t.done(): t.cancel()
+    return None
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# SELF-CONTAINED JIOSAAVN (no alt_source dependency)
+# ═══════════════════════════════════════════════════════════════
+import aiohttp as _aiohttp_sav
+
+_SAV_BASES = [
+    "https://saavn.dev/api",
+    "https://jiosaavn-api-privatecvc2.vercel.app/api",
+    "https://jiosaavn-api.vercel.app/api",
+]
+
+
+async def _jiosaavn_direct(query: str, expected_title: str = None):
+    """Search JioSaavn + return direct audio URL (320kbps preferred)."""
+    if not query:
+        return None
+    for base in _SAV_BASES:
+        try:
+            async with _aiohttp_sav.ClientSession() as s:
+                async with s.get(f"{base}/search/songs",
+                                 params={"query": query, "limit": 5},
+                                 timeout=_aiohttp_sav.ClientTimeout(total=6)) as r:
+                    if r.status != 200:
+                        continue
+                    d = await r.json()
+            results = (d.get("data") or {}).get("results") or []
+            if not results:
+                continue
+            best, best_score = None, 0
+            for item in results:
+                t = (item.get("name") or "").lower()
+                if expected_title:
+                    score = SequenceMatcher(None, expected_title.lower(), t).ratio()
+                    if score > best_score:
+                        best_score, best = score, item
+                else:
+                    best = item
+                    break
+            if expected_title and best_score < 0.5:
+                continue
+            if not best:
+                continue
+            for u in (best.get("downloadUrl") or []):
+                if u.get("quality") in ("320kbps", "160kbps", "96kbps"):
+                    link = u.get("link") or u.get("url")
+                    if link:
+                        LOGGER.info(f"✅ JioSaavn: {best.get('name')[:50]}")
+                        return link
+        except Exception:
+            continue
     return None
 
