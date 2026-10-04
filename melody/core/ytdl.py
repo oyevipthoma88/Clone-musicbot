@@ -6598,3 +6598,82 @@ async def resolve_stream_urls(
             video_id, _time_mod.monotonic() - _t0,
         )
         return resolved
+
+
+async def _worker_rescue_download(
+    video_id: str, tag: str, worker_url: str,
+    headers: dict | None = None,
+    early_state: "_EarlyDownloadState | None" = None,
+    cancel_event: "threading.Event | None" = None,
+) -> "str | None":
+    """Download audio via Cloudflare Worker-wrapped CDN URL.
+
+    The URL is already wrapped: https://worker/?url=<encoded>.
+    Plain HTTP GET through Worker (Cloudflare egress) → saved to cache.
+    """
+    budget = _env_float("WORKER_RESCUE_TIMEOUT", 90.0)
+    started = _time_mod.monotonic()
+    ext = "m4a"
+    tmp_path = f"/tmp/melody_{video_id}_{tag}.worker.part"
+    try:
+        client_kwargs = _http_client_kwargs()
+        client_kwargs["timeout"] = _httpx.Timeout(budget, connect=8.0)
+        # Worker has its own egress — do NOT force local proxy/source_address
+        client_kwargs.pop("proxy", None)
+        hdrs = dict(headers or {})
+        hdrs.setdefault(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        )
+        written = 0
+        async with _httpx.AsyncClient(**client_kwargs) as client:
+            async with client.stream("GET", worker_url, headers=hdrs) as response:
+                if response.status_code >= 400:
+                    LOGGER.info(
+                        "#download Worker GET %s returned HTTP %s",
+                        video_id, response.status_code,
+                    )
+                    return None
+                mime = str(
+                    response.headers.get("content-type", "")
+                ).split(";")[0].strip().lower()
+                ext = _RESCUE_EXT_BY_MIME.get(mime, "m4a")
+                with open(tmp_path, "wb") as fh:
+                    async for chunk in response.aiter_bytes(64 * 1024):
+                        if cancel_event is not None and cancel_event.is_set():
+                            raise _DownloadCancelled("worker rescue superseded")
+                        if _time_mod.monotonic() - started > budget:
+                            raise asyncio.TimeoutError(
+                                "worker rescue budget exceeded"
+                            )
+                        fh.write(chunk)
+                        written += len(chunk)
+        if written < 1024:
+            LOGGER.info("#download Worker rescue too small (%d bytes)", written)
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            return None
+        # Promote to the same cache path yt-dlp would use, if helper exists.
+        try:
+            if "_promote_to_cache" in globals():
+                final_path = _promote_to_cache(video_id, tag, tmp_path, ext)
+            else:
+                final_path = tmp_path
+        except Exception:
+            final_path = tmp_path
+        LOGGER.info(
+            "\U0001f6df #download Worker rescue supplied %s (%d bytes)",
+            video_id, written,
+        )
+        return final_path
+    except _DownloadCancelled:
+        raise
+    except Exception as exc:
+        LOGGER.info("#download Worker rescue error for %s: %s", video_id, exc)
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        return None
