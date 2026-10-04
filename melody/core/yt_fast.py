@@ -160,7 +160,7 @@ async def _jiosaavn_verified(query, yt_title=None):
         return None
 
 
-async def race_fastest(query: str, video_id: str, yt_title: str = None, timeout: float = 6.0):
+async def race_fastest(query: str, video_id: str, yt_title: str = None, timeout: float = 6.0, want_video: bool = False):
     # PRIORITY: JioSaavn first when YouTube is blocked
     try:
         from melody.core import alt_source as _alt
@@ -183,17 +183,19 @@ async def race_fastest(query: str, video_id: str, yt_title: str = None, timeout:
     
     """Parallel race — YouTube + JioSaavn + SoundCloud. Jo pehle, wahi."""
     tasks = {}
-    # ✅ YouTube ko skip karo agar block flag active hai (5-7s bachta hai)
+    # ✅ YouTube skip karo SIRF tab jab audio-only chahiye AUR YouTube blocked ho
+    # /vplay ke liye YouTube ZAROORI hai (video stream sirf YT deta hai)
     _skip_yt = False
-    try:
-        from melody.core import alt_source as _alt
-        _skip_yt = _alt.youtube_blocked()
-    except Exception:
-        pass
+    if not want_video:
+        try:
+            from melody.core import alt_source as _alt
+            _skip_yt = _alt.youtube_blocked()
+        except Exception:
+            pass
     if not _skip_yt:
         tasks["YouTube"] = asyncio.create_task(fast_youtube(video_id))
     else:
-        LOGGER.info("⚡ YouTube block flag ON — skipping YT in race")
+        LOGGER.info("⚡ YouTube block flag ON — skipping YT (audio-only mode)")
     tasks["JioSaavn"] = asyncio.create_task(_jiosaavn_verified(query, yt_title))
     try:
         from melody.core import alt_source as alt
