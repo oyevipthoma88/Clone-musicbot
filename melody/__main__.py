@@ -605,13 +605,13 @@ async def main():
     from melody import bot, assistant
     from melody.core.call import recover_playback, start_call_py
 
-        # Auto-refresh cookies from COOKIES_URL if set
+    # Auto-refresh cookies from COOKIES_URL if set
     try:
         await refresh_cookies_from_url()
     except Exception as _e:
         LOGGER.warning(f"Cookie auto-refresh skipped: {_e}")
 
-LOGGER.info("Starting Apex Vibes...")
+    LOGGER.info("Starting Apex Vibes...")
 
     await bot.start()
     LOGGER.info("Bot client started.")
