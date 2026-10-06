@@ -4083,7 +4083,7 @@ async def download_replied_media(client, message, video: bool = False) -> "dict 
     return _tg_media_info(media, message, vid)
 
 
-async def _safe_shield(fut, video_id: str, timeout: float = 15.0):
+async def _safe_shield(fut, video_id: str, timeout: float = 15.0, audio_only: bool = True):
     """Wrap asyncio.shield with hard timeout → Worker rescue on hang."""
     try:
         return await asyncio.wait_for(asyncio.shield(fut), timeout=timeout)
@@ -4133,12 +4133,97 @@ async def _safe_shield(fut, video_id: str, timeout: float = 15.0):
         # Ab: YouTube ko blocked mark karo (agle gaane seedha JioSaavn/
         # SoundCloud se ~2-3s me), aur abhi wale gaane ke liye alt source ko
         # original download ke saath RACE karao — jo pehle file de, wahi bajega.
-        return await _hang_alt_rescue(fut, video_id)
+        return await _hang_alt_rescue(fut, video_id, audio_only)
 
 
 
-async def _hang_alt_rescue(fut, video_id: str):
-    """Race the still-running YouTube future against JioSaavn/SoundCloud."""
+async def _alt_video_download(video_id: str, cancel_event=None) -> "str | None":
+    """/vplay fallback: same video from Bilibili (H.264+AAC MP4, 360p/480p)."""
+    if not _alt_source.enabled() or not is_valid_video_id(video_id):
+        return None
+    meta = await _alt_track_meta(video_id)
+    if not meta:
+        return None
+    try:
+        from melody.core import bili_source as _bili
+        return await _bili.fetch_video(
+            video_id, str(meta.get("title") or ""),
+            int(meta.get("duration") or 0), cancel_event=cancel_event,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.info("alt video (bilibili) failed for %s: %s", video_id, str(exc)[:160])
+        return None
+
+
+async def _video_race_locked(video_id, tag, cancel_event, early_state):
+    """/vplay 5-second rule: YouTube first, Bilibili video joins after a short
+    head start (immediately when YouTube is known-blocked). First file wins."""
+    blocked = _alt_source.youtube_blocked()
+    delay = 0.0 if blocked else max(0.0, _env_float("ALT_VIDEO_RACE_DELAY", 2.5))
+    yt_cancel = threading.Event()
+    alt_cancel = threading.Event()
+
+    async def _alt():
+        if delay:
+            await asyncio.sleep(delay)
+        if cancel_event is not None and cancel_event.is_set():
+            return None
+        return await _alt_video_download(video_id, cancel_event=alt_cancel)
+
+    yt_task = asyncio.ensure_future(_youtube_download_locked(
+        video_id, False, tag, cancel_event=yt_cancel, early_state=early_state,
+    ))
+    alt_task = asyncio.ensure_future(_alt())
+    yt_error = None
+    pending = {yt_task, alt_task}
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            if alt_task in done:
+                try:
+                    alt_path = alt_task.result()
+                except BaseException:  # noqa: BLE001
+                    alt_path = None
+                if alt_path:
+                    yt_playing = (
+                        early_state is not None and early_state.ready.is_set()
+                        and early_state.path and early_state.path != alt_path
+                    )
+                    if yt_playing and not yt_task.done():
+                        try:
+                            return await yt_task
+                        except BaseException:  # noqa: BLE001
+                            return alt_path
+                    yt_cancel.set()
+                    LOGGER.info("\u26a1 #vrace bilibili video won for %s", video_id)
+                    return alt_path
+            if yt_task in done:
+                try:
+                    path = yt_task.result()
+                except BaseException as exc:  # noqa: BLE001
+                    yt_error = exc
+                    _alt_source.mark_youtube_blocked(type(exc).__name__)
+                    continue
+                if path:
+                    alt_cancel.set()
+                    return path
+    finally:
+        for t in (yt_task, alt_task):
+            if not t.done():
+                t.add_done_callback(lambda t: t.cancelled() or t.exception())
+        if not alt_task.done():
+            alt_cancel.set()
+            alt_task.cancel()
+    if yt_error is not None:
+        raise yt_error
+    raise RuntimeError(f"no video source for {video_id}")
+
+
+async def _hang_alt_rescue(fut, video_id: str, audio_only: bool = True):
+    """Race the still-running YouTube future against JioSaavn/Bilibili/SoundCloud
+    (audio) or Bilibili video (/vplay)."""
     try:
         _alt_source.mark_youtube_blocked("download hang")
     except Exception:  # noqa: BLE001
@@ -4147,7 +4232,8 @@ async def _hang_alt_rescue(fut, video_id: str):
     yt_wait = asyncio.ensure_future(asyncio.shield(fut))
     yt_wait.add_done_callback(_consume_download_future)
     alt_task = asyncio.ensure_future(
-        _alt_source_download(video_id, _cache_tag(True))
+        _alt_source_download(video_id, _cache_tag(True)) if audio_only
+        else _alt_video_download(video_id)
     )
     pending = {yt_wait, alt_task}
     deadline = time.monotonic() + budget
@@ -4366,7 +4452,7 @@ async def download_audio(
                         task.cancel()
         # === JIOSAAVN_RESCUE_V2 (catch YT bot-check, use JioSaavn) ===
     try:
-        return await _safe_shield(fut, video_id, timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")))
+        return await _safe_shield(fut, video_id, timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")), audio_only=audio_only)
     except Exception as _yt_err:
         _emsg = str(_yt_err).lower()
         if any(x in _emsg for x in (
@@ -4427,7 +4513,7 @@ async def download_audio(
             for task in (ready_task, future_task):
                 if not task.done():
                     task.cancel()
-    return await _safe_shield(fut, video_id, timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")))
+    return await _safe_shield(fut, video_id, timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")), audio_only=audio_only)
 
 
 async def wait_for_download(video_id: str, audio_only: bool = True,
@@ -4756,6 +4842,10 @@ async def _download_audio_locked(
             _alt_source.clear_youtube_block()
             LOGGER.info("✅ YouTube download worked again for %s — block cleared", video_id)
         return path
+
+    if (not audio_only and _alt_source.enabled() and is_valid_video_id(video_id)
+            and _env_flag("ALT_VIDEO_RACE", True)):
+        return await _video_race_locked(video_id, tag, cancel_event, early_state)
 
     if not audio_only or not _race_enabled() or not is_valid_video_id(video_id):
         return await _youtube_download_locked(
@@ -6707,6 +6797,25 @@ async def resolve_stream_urls(
             # then start instantly instead of paying the whole cost again.
             for t in pending:
                 t.add_done_callback(_cache_late_resolve(key))
+
+        if not resolved and re.fullmatch(r"[A-Za-z0-9_-]{11}", vid_only or ""):
+            # NON-YOUTUBE DIRECT STREAM (JioSaavn / Bilibili): YouTube walled
+            # or slow -> stream the same song straight from a CDN that does
+            # not bot-wall cloud IPs. No download, ffmpeg starts in ~2-3s.
+            try:
+                _meta = await asyncio.wait_for(_alt_track_meta(vid_only), timeout=3.0)
+                if _meta and _meta.get("title"):
+                    resolved = await _alt_source.resolve_alt_stream(
+                        str(_meta.get("title") or ""), int(_meta.get("duration") or 0),
+                        want_video=want_video,
+                        timeout=_env_float("ALT_DIRECT_TIMEOUT", 4.0),
+                    )
+                    if resolved:
+                        LOGGER.info("⚡ #stream alt direct (%s) for %s in %.2fs",
+                                    resolved.get("source"), vid_only, _time_mod.monotonic() - _t0)
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                LOGGER.info("#stream alt direct failed for %s: %s", vid_only, exc)
 
         if not resolved and re.fullmatch(r"[A-Za-z0-9_-]{11}", vid_only or ""):
             # Public Invidious metadata is slower and less predictable than

@@ -28,7 +28,7 @@ yt-dlp ladder again before falling back.
 
 Env knobs:
   ALT_SOURCE=0                    disable this module entirely
-  ALT_SOURCE_ORDER=jiosaavn,soundcloud
+  ALT_SOURCE_ORDER=jiosaavn,bilibili,soundcloud
   ALT_SOURCE_BLOCK_TTL=900        seconds to prefer the fallback after a wall
   ALT_SAAVN_BITRATE=320           320 / 160 / 96
 """
@@ -250,11 +250,14 @@ def _score(query: str, cand_title: str, want_dur: int, cand_dur: int, relaxed: b
     if want_dur and cand_dur:
         diff = abs(int(want_dur) - int(cand_dur))
         tol = max(20, int(want_dur * 0.15))
-        max_diff = tol * 6 if relaxed else tol * 3
+        # WRONG-SONG FIX: strict mode used to accept up to 3x tolerance
+        # (60s+), so a different song with similar words won. Same song on
+        # JioSaavn/Bilibili is almost always within ~15% of the YouTube length.
+        max_diff = tol * 4 if relaxed else tol
         if diff > max_diff:
             # Official videos often carry long intros/outros. A very strong
             # title match is still the same song; anything weaker is not.
-            if overlap < 0.8 or diff > max(240, want_dur * 0.6):
+            if overlap < 0.9 or diff > max(120, want_dur * 0.4):
                 return 0.0
             score -= 0.2
         elif diff <= tol:
@@ -309,10 +312,19 @@ def query_variants(title: str) -> list:
 
 
 def _good_enough(score: float, want_dur: int) -> bool:
-    return score >= 0.5
+    # WRONG-SONG FIX: 0.5 let half-matching titles through. Without a known
+    # duration demand a near-full title match; with one, the +0.5 duration
+    # bonus in _score() already rewards the right track.
+    try:
+        need = float(os.getenv("ALT_MIN_SCORE", "0.75"))
+    except ValueError:
+        need = 0.75
+    if not want_dur:
+        need = max(need, 0.85)
+    return score >= need
 
 
-_RELAXED_THRESHOLD = 0.3
+_RELAXED_THRESHOLD = 0.55
 
 
 def _good_enough_relaxed(score: float, want_dur: int) -> bool:
@@ -397,7 +409,7 @@ async def _try_jiosaavn(query, want_dur, final_base, cancel_event, relaxed=False
             LOGGER.info("alt/jiosaavn: no confident match for %r (best=%.2f %r) relaxed=%s",
                         query, best_score, best["title"][:60], relaxed)
             return None
-        pref = os.getenv("ALT_SAAVN_BITRATE", "320").strip() or "320"
+        pref = os.getenv("ALT_SAAVN_BITRATE", "160").strip() or "160"  # 160k = half the bytes, VC is Opus anyway
         tmp = f"{final_base}.alt.part"
         for bitrate in dict.fromkeys([pref, "160", "96"]):
             url = await _saavn_auth_url(client, best["enc"], bitrate)
@@ -493,7 +505,16 @@ def _rm(path) -> None:
             pass
 
 
-_PROVIDERS = {"jiosaavn": _try_jiosaavn, "soundcloud": _try_soundcloud}
+async def _try_bilibili(query, want_dur, final_base, cancel_event, relaxed=False):
+    from melody.core import bili_source as _bili
+    return await _bili.try_audio(query, want_dur, final_base, cancel_event, relaxed=relaxed)
+
+
+_PROVIDERS = {
+    "jiosaavn": _try_jiosaavn,
+    "bilibili": _try_bilibili,
+    "soundcloud": _try_soundcloud,
+}
 
 
 async def fetch_alternative_audio(
@@ -515,7 +536,10 @@ async def fetch_alternative_audio(
     if want_dur and want_dur > int(os.getenv("ALT_MAX_DURATION", "7200")):
         return None  # mixes / jukeboxes / podcasts — no sane single-track match
     final_base = f"/tmp/melody_{video_id}_{tag}"
-    order = [p.strip() for p in os.getenv("ALT_SOURCE_ORDER", "jiosaavn,soundcloud").split(",")]
+    order = [p.strip() for p in os.getenv("ALT_SOURCE_ORDER", "jiosaavn,bilibili,soundcloud").split(",")]
+    if "bilibili" not in order and os.getenv("BILI_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        # Old Heroku configs pin ALT_SOURCE_ORDER=jiosaavn,soundcloud — still use Bilibili.
+        order.insert(1 if order and order[0] == "jiosaavn" else 0, "bilibili")
     providers = [(n, _PROVIDERS[n]) for n in order if n in _PROVIDERS]
     if not providers:
         return None
@@ -523,7 +547,7 @@ async def fetch_alternative_audio(
     # every next one gets a short head-start delay (ALT_STAGGER, default
     # 1.5s) so a fast JioSaavn hit does not waste a SoundCloud search, but a
     # slow/no-match JioSaavn never costs more than ~1.5s.
-    stagger = max(0.0, float(os.getenv("ALT_STAGGER", "1.5") or 1.5))
+    stagger = max(0.0, float(os.getenv("ALT_STAGGER", "0.6") or 0.6))
     started = time.monotonic()
 
     async def _run(idx, name, fn):
@@ -565,7 +589,7 @@ async def fetch_alternative_audio(
     # retry with a lower threshold and a broader query (raw title without
     # noise-word stripping). This catches songs where clean_title() removed
     # a key word or the alt-source catalogue uses a slightly different name.
-    if not _relaxed and os.getenv("ALT_RELAXED_RETRY", "1").strip().lower() not in {"0", "false", "no", "off"}:
+    if not _relaxed and os.getenv("ALT_RELAXED_RETRY", "0").strip().lower() not in {"0", "false", "no", "off"}:
         core = variants[0] if _DEV_RE.search(title or "") else song_core(title)
         if core and len(_tokens(core)) >= 1:
             LOGGER.info("🔄 alt source relaxed retry for %s with song-name query %r", video_id, core[:60])
@@ -574,3 +598,79 @@ async def fetch_alternative_audio(
                 _relaxed=True,
             )
     return None
+
+
+
+# ── Direct-stream (no download) alt URLs ─────────────────────────────────
+async def saavn_stream_url(title: str, duration: int = 0) -> Optional[dict]:
+    """Signed JioSaavn CDN URL for the same song — ffmpeg streams it directly,
+    so /play starts in ~1-2s instead of waiting for a full download."""
+    if not enabled() or not title:
+        return None
+    want_dur = int(duration or 0)
+    timeout = httpx.Timeout(8.0, connect=4.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        for q in query_variants(title)[:3]:
+            try:
+                cands = await _saavn_candidates(client, q)
+            except Exception:  # noqa: BLE001
+                continue
+            if not cands:
+                continue
+            score, best = max(
+                ((_score(q, c["title"], want_dur, c["duration"]), c) for c in cands),
+                key=lambda x: x[0],
+            )
+            if not _good_enough(score, want_dur):
+                continue
+            bitrate = os.getenv("ALT_SAAVN_STREAM_BITRATE", "160").strip() or "160"
+            url = await _saavn_auth_url(client, best["enc"], bitrate)
+            if url:
+                LOGGER.info("🔗 alt/jiosaavn direct -> %r (score %.2f)", best["title"][:60], score)
+                return {
+                    "audio": url, "video": None, "is_live": False,
+                    "headers": dict(_SAAVN_HEADERS), "source": "jiosaavn",
+                    "expires_at": time.time() + 1800,
+                }
+    return None
+
+
+async def resolve_alt_stream(title: str, duration: int = 0, want_video: bool = False,
+                             timeout: float = 4.0) -> Optional[dict]:
+    """Fastest confident non-YouTube direct stream.
+
+    Audio: JioSaavn and Bilibili race; JioSaavn (official studio audio) wins
+    if both are ready. Video: Bilibili DASH video+audio.
+    """
+    from melody.core import bili_source as _bili
+
+    tasks = {}
+    if not want_video:
+        tasks["jiosaavn"] = asyncio.ensure_future(saavn_stream_url(title, duration))
+    tasks["bilibili"] = asyncio.ensure_future(_bili.resolve_urls(title, duration, want_video))
+    deadline = time.monotonic() + timeout
+    results = {}
+    try:
+        pending = set(tasks.values())
+        while pending:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            done, pending = await asyncio.wait(pending, timeout=left,
+                                               return_when=asyncio.FIRST_COMPLETED)
+            for name, t in tasks.items():
+                if t in done:
+                    try:
+                        results[name] = t.result()
+                    except Exception as exc:  # noqa: BLE001
+                        LOGGER.info("alt direct %s failed: %s", name, str(exc)[:120])
+                        results[name] = None
+            if results.get("jiosaavn"):
+                return results["jiosaavn"]
+            if results.get("bilibili") and (want_video or "jiosaavn" in results):
+                return results["bilibili"]
+        return results.get("jiosaavn") or results.get("bilibili")
+    finally:
+        for t in tasks.values():
+            if not t.done():
+                t.cancel()
