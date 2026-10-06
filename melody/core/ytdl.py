@@ -4755,7 +4755,22 @@ async def _alt_track_meta(video_id: str) -> dict:
 
     Uses only metadata paths YouTube does NOT bot-wall on cloud IPs: the
     in-process cache, Data API v3 (YOUTUBE_API_KEY), InnerTube /next, oEmbed.
+
+    WRONG-SONG ROOT FIX: Data API v3 is asked FIRST (~300ms, never walled).
+    It returns the exact official title + real duration; search-cache hits
+    often lacked the duration, which disabled the length check and let
+    karaoke/cover/other songs win the alt-source race.
     """
+    if ytapi_enabled():
+        try:
+            loop = asyncio.get_running_loop()
+            info = await asyncio.wait_for(
+                loop.run_in_executor(None, _ytapi_details_sync, video_id), timeout=2.5,
+            )
+            if info and info.get("title") and info.get("title") != "Unknown":
+                return info
+        except Exception:  # noqa: BLE001
+            pass
     for key in (f"id:{video_id}", f"vid:{video_id}"):
         try:
             hit = _meta_cache_get(key)

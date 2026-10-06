@@ -35,6 +35,8 @@ Env knobs:
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import functools
 import html
 import os
 import difflib
@@ -233,9 +235,36 @@ def _overlap(q: set, c: set, c_text: str) -> float:
     return max(q_score, min(1.0, c_score * 1.2)) if hits else 0.0
 
 
+# ── WRONG-SONG ROOT FIX: version guard ──────────────────────────────────
+# Logs showed 'Never Gonna Give You Up' -> '... (Instrumental Karaoke)' with
+# score 1.50: title words + duration matched, so a karaoke/cover/remix copy
+# was played instead of the original. Any "version" marker present in the
+# candidate but NOT in the real YouTube title (from Data API v3) now rejects
+# the candidate outright, and vice-versa for remix/lofi requests.
+_SRC_TITLE: "contextvars.ContextVar[str]" = contextvars.ContextVar("alt_src_title", default="")
+_VERSION_RE = re.compile(
+    r"\b(karaoke|instrumental|cover|covered|remix|remixed|reprise|unplugged|"
+    r"acoustic|lofi|lo-fi|slowed|reverb|sped|speed\s*up|nightcore|8d|mashup|"
+    r"medley|live|female|male|sad|dj|bass\s*boost(?:ed)?|ringtone|bgm|"
+    r"tribute|parody|piano|guitar|flute|violin|whistle|beat|beats|rendition|"
+    r"chorus|edit|extended|trap|jhankar|chill|revisited|recreated|mix)\b",
+    re.I,
+)
+
+
+def _versions(text: str) -> set:
+    return {m.group(1).lower().replace(" ", "") for m in _VERSION_RE.finditer(translit(text or ""))}
+
+
+def version_mismatch(src_title: str, cand_title: str) -> bool:
+    return bool(_versions(cand_title) ^ _versions(src_title))
+
+
 def _score(query: str, cand_title: str, want_dur: int, cand_dur: int, relaxed: bool = False) -> float:
     q, c = _tokens(query), _tokens(cand_title)
     if not q or not c:
+        return 0.0
+    if version_mismatch(_SRC_TITLE.get() or query, cand_title):
         return 0.0
     overlap = _overlap(q, c, translit(cand_title))
     # Song name must match, not just the artist: the first word of the query
@@ -257,7 +286,7 @@ def _score(query: str, cand_title: str, want_dur: int, cand_dur: int, relaxed: b
         if diff > max_diff:
             # Official videos often carry long intros/outros. A very strong
             # title match is still the same song; anything weaker is not.
-            if overlap < 0.9 or diff > max(120, want_dur * 0.4):
+            if not relaxed or overlap < 0.9 or diff > max(60, want_dur * 0.25):
                 return 0.0
             score -= 0.2
         elif diff <= tol:
@@ -460,6 +489,9 @@ def _soundcloud_sync(query, want_dur, final_base, relaxed=False) -> Optional[str
     threshold_fn = _good_enough_relaxed if relaxed else _good_enough
     tried = 0
     for score, cand in ranked:
+        cd = int(cand.get("duration") or 0)
+        if want_dur and (not cd or abs(cd - want_dur) > max(15, int(want_dur * 0.1))):
+            continue  # SoundCloud: only an exact-length upload is the same song
         if not threshold_fn(score, want_dur) or tried >= 3:
             break
         tried += 1
@@ -493,7 +525,7 @@ async def _try_soundcloud(query, want_dur, final_base, cancel_event, relaxed=Fal
     except Exception:  # noqa: BLE001
         pool = None
     return await asyncio.wait_for(
-        loop.run_in_executor(pool, _soundcloud_sync, query, want_dur, final_base, relaxed), 60.0,
+        loop.run_in_executor(pool, functools.partial(contextvars.copy_context().run, _soundcloud_sync, query, want_dur, final_base, relaxed)), 60.0,
     )
 
 
@@ -531,6 +563,7 @@ async def fetch_alternative_audio(
     variants = query_variants(title)
     if not variants:
         return None
+    _SRC_TITLE.set(title)
     query = variants[0]
     want_dur = int(duration or 0)
     if want_dur and want_dur > int(os.getenv("ALT_MAX_DURATION", "7200")):
@@ -608,6 +641,7 @@ async def saavn_stream_url(title: str, duration: int = 0) -> Optional[dict]:
     if not enabled() or not title:
         return None
     want_dur = int(duration or 0)
+    _SRC_TITLE.set(title)
     timeout = httpx.Timeout(8.0, connect=4.0)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
         for q in query_variants(title)[:3]:
@@ -644,6 +678,7 @@ async def resolve_alt_stream(title: str, duration: int = 0, want_video: bool = F
     """
     from melody.core import bili_source as _bili
 
+    _SRC_TITLE.set(title)
     tasks = {}
     if not want_video:
         tasks["jiosaavn"] = asyncio.ensure_future(saavn_stream_url(title, duration))

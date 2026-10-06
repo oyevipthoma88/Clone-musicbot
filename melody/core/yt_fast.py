@@ -510,8 +510,14 @@ async def _jiosaavn_direct(query: str, expected_title: str = None):
             if not results:
                 continue
             best, best_score = None, 0
+            try:
+                from melody.core.alt_source import version_mismatch as _vm
+            except Exception:  # noqa: BLE001
+                _vm = lambda a, b: False
             for item in results:
                 t = (item.get("name") or "").lower()
+                if expected_title and _vm(expected_title, t):
+                    continue  # karaoke/cover/remix != original
                 if expected_title:
                     score = SequenceMatcher(None, expected_title.lower(), t).ratio()
                     if score > best_score:
@@ -519,7 +525,7 @@ async def _jiosaavn_direct(query: str, expected_title: str = None):
                 else:
                     best = item
                     break
-            if expected_title and best_score < 0.5:
+            if expected_title and best_score < 0.6:
                 continue
             if not best:
                 continue
