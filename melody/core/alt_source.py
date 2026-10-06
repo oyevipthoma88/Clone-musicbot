@@ -547,7 +547,7 @@ async def fetch_alternative_audio(
     # every next one gets a short head-start delay (ALT_STAGGER, default
     # 1.5s) so a fast JioSaavn hit does not waste a SoundCloud search, but a
     # slow/no-match JioSaavn never costs more than ~1.5s.
-    stagger = max(0.0, float(os.getenv("ALT_STAGGER", "0.6") or 0.6))
+    stagger = max(0.0, float(os.getenv("ALT_STAGGER", "0") or 0))
     started = time.monotonic()
 
     async def _run(idx, name, fn):

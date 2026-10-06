@@ -787,6 +787,14 @@ async def main():
                 LOGGER.info("direct-CDN resolver warmup skipped: %s", exc)
         spawn(_warm_direct_resolver())
 
+    # Bilibili backup: open its pooled connection + cookie now so a YouTube
+    # block never costs an extra handshake on the first /play.
+    try:
+        from melody.core import bili_source as _bili
+        spawn(_bili.prewarm())
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.info("bilibili warmup skipped: %s", exc)
+
     # R14 FIX: keep resident memory from ratcheting up until Heroku reports
     # "Error R14 (Memory quota exceeded)". See utils/memguard.py.
     from utils.memguard import memory_guard

@@ -4254,12 +4254,53 @@ async def _hang_alt_rescue(fut, video_id: str, audio_only: bool = True):
                 if path and os.path.exists(str(path)):
                     src = "alt source" if t is alt_task else "YouTube"
                     LOGGER.info("✅ hang rescue: %s supplied %s", src, video_id)
+                    if not fut.done():
+                        # Unblock every other waiter (dedup callers, early
+                        # prefix waiters, archive task) with the same file.
+                        fut.set_result(path)
                     return path
     finally:
         for t in (yt_wait, alt_task):
             if not t.done():
                 t.cancel()
     raise asyncio.TimeoutError(f"no source delivered {video_id} (YouTube hung, no alt match)")
+
+async def _shield_with_rescue(fut, video_id: str, audio_only: bool = True) -> str:
+    """Wait for the shared download (hang -> alt race), then JioSaavn as last resort."""
+    try:
+        return await _safe_shield(fut, video_id, timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")), audio_only=audio_only)
+    except Exception as _yt_err:
+        _emsg = str(_yt_err).lower()
+        if any(x in _emsg for x in (
+            "sign in to confirm", "403", "forbidden",
+            "not a bot", "unavailable", "requested format", "no alt match",
+        )):
+            LOGGER.warning(f"YT blocked for {video_id} → JioSaavn rescue")
+            try:
+                import sys as _sys, os as _os
+                _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
+                from melody.core.yt_fast import _jiosaavn_direct as _jsd
+                _alt = await _jsd(video_id, None)
+                if _alt:
+                    import tempfile as _tf
+                    _td = _tf.mkdtemp(prefix="melody-sav-")
+                    _opts = dict(_ydl_opts(audio_only=audio_only))
+                    _opts["outtmpl"] = _os.path.join(_td, "%(id)s.%(ext)s")
+                    _opts.pop("progress_hooks", None)
+                    _opts.pop("source_address", None)
+                    def _dl_sav():
+                        from yt_dlp import YoutubeDL as _YDL
+                        with _YDL(_opts) as _y:
+                            _i = _y.extract_info(_alt, download=True)
+                            return _y.prepare_filename(_i)
+                    _fp = await asyncio.get_running_loop().run_in_executor(YTDL_POOL, _dl_sav)
+                    if _fp and _os.path.exists(_fp):
+                        LOGGER.info(f"✅ JioSaavn rescue OK: {_os.path.basename(_fp)}")
+                        return _fp
+            except Exception as _sav_err:
+                LOGGER.warning(f"JioSaavn rescue failed: {_sav_err}")
+        raise
+
 
 async def download_audio(
     video_id: str, audio_only: bool = True, priority: int = 0, owner=None,
@@ -4443,6 +4484,7 @@ async def download_audio(
             try:
                 done, _ = await asyncio.wait(
                     {ready_task, future_task}, return_when=asyncio.FIRST_COMPLETED,
+                    timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")),
                 )
                 if state.path and os.path.exists(state.path):
                     return state.path
@@ -4450,41 +4492,13 @@ async def download_audio(
                 for task in (ready_task, future_task):
                     if not task.done():
                         task.cancel()
-        # === JIOSAAVN_RESCUE_V2 (catch YT bot-check, use JioSaavn) ===
-    try:
-        return await _safe_shield(fut, video_id, timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")), audio_only=audio_only)
-    except Exception as _yt_err:
-        _emsg = str(_yt_err).lower()
-        if any(x in _emsg for x in (
-            "sign in to confirm", "403", "forbidden",
-            "not a bot", "unavailable", "requested format", "no alt match",
-        )):
-            LOGGER.warning(f"YT blocked for {video_id} → JioSaavn rescue")
-            try:
-                import sys as _sys, os as _os
-                _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
-                from melody.core.yt_fast import _jiosaavn_direct as _jsd
-                _alt = await _jsd(video_id, None)
-                if _alt:
-                    import tempfile as _tf
-                    _td = _tf.mkdtemp(prefix="melody-sav-")
-                    _opts = dict(_ydl_opts(audio_only=audio_only))
-                    _opts["outtmpl"] = _os.path.join(_td, "%(id)s.%(ext)s")
-                    _opts.pop("progress_hooks", None)
-                    _opts.pop("source_address", None)
-                    def _dl_sav():
-                        from yt_dlp import YoutubeDL as _YDL
-                        with _YDL(_opts) as _y:
-                            _i = _y.extract_info(_alt, download=True)
-                            return _y.prepare_filename(_i)
-                    _fp = await asyncio.get_running_loop().run_in_executor(YTDL_POOL, _dl_sav)
-                    if _fp and _os.path.exists(_fp):
-                        LOGGER.info(f"✅ JioSaavn rescue OK: {_os.path.basename(_fp)}")
-                        return _fp
-            except Exception as _sav_err:
-                LOGGER.warning(f"JioSaavn rescue failed: {_sav_err}")
-        raise
-    # === END RESCUE ===
+        # ROOT-CAUSE FIX: a joining caller now always returns from inside this
+        # branch. Previously the rescue block below sat at function level, so
+        # the FIRST caller returned before the download job was ever created —
+        # the shared future never resolved and every /play hung until the
+        # "startup grace window expired" timeout.
+        return await _shield_with_rescue(fut, video_id, audio_only)
+
 
 
     cancel_event = threading.Event()
@@ -4513,7 +4527,7 @@ async def download_audio(
             for task in (ready_task, future_task):
                 if not task.done():
                     task.cancel()
-    return await _safe_shield(fut, video_id, timeout=float(os.getenv("DOWNLOAD_HARD_TIMEOUT", "15.0")), audio_only=audio_only)
+    return await _shield_with_rescue(fut, video_id, audio_only)
 
 
 async def wait_for_download(video_id: str, audio_only: bool = True,

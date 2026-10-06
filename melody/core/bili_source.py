@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import math
 import os
 import re
 import time
@@ -52,6 +53,12 @@ _BAD_RE = re.compile(
     re.I,
 )
 _TAG_RE = re.compile(r"<[^>]+>")
+_GOOD_RE = re.compile(r"(官方|official|vevo|t-series|tseries|zee music|sony music|"
+                      r"saregama|tips|speed records|desi music|lyric|audio|mv|"
+                      r"\u97f3\u4e50|原版|无损)", re.I)
+_MUSIC_TYPES = {"音乐", "原创音乐", "翻唱", "MV", "音乐现场", "音乐综合", "演奏", "VOCALOID·UTAU"}
+_PICK_CACHE: dict = {}
+_PICK_TTL = 3600.0
 
 _buvid: dict = {"b3": "", "b4": "", "at": 0.0}
 _buvid_lock = asyncio.Lock()
@@ -78,11 +85,33 @@ def _parse_dur(d) -> int:
     return total
 
 
-async def _client() -> httpx.AsyncClient:
-    c = httpx.AsyncClient(
-        headers=_HEADERS, follow_redirects=True,
-        timeout=httpx.Timeout(20.0, connect=5.0),
-    )
+class _SharedClient:
+    """Thin proxy so existing `await c.aclose()` calls keep the pooled
+    connection alive instead of closing it (TLS reuse = ~300-600ms per /play)."""
+
+    def __init__(self, inner: httpx.AsyncClient):
+        self._inner = inner
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    async def aclose(self):  # noqa: D401 - intentionally a no-op
+        return None
+
+
+_shared: dict = {"c": None}
+
+
+async def _client() -> "httpx.AsyncClient":
+    c = _shared["c"]
+    if c is None or c.is_closed:
+        c = httpx.AsyncClient(
+            headers=_HEADERS, follow_redirects=True,
+            timeout=httpx.Timeout(12.0, connect=4.0),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10,
+                                keepalive_expiry=120.0),
+        )
+        _shared["c"] = c
     async with _buvid_lock:
         if not _buvid["b3"] or time.monotonic() - _buvid["at"] > 6 * 3600:
             try:
@@ -95,7 +124,18 @@ async def _client() -> httpx.AsyncClient:
         c.cookies.set("buvid3", _buvid["b3"], domain=".bilibili.com")
     if _buvid["b4"]:
         c.cookies.set("buvid4", _buvid["b4"], domain=".bilibili.com")
-    return c
+    return _SharedClient(c)
+
+
+async def prewarm() -> None:
+    """Open the pooled connection + buvid cookie at startup (first /play fast)."""
+    if not enabled():
+        return
+    try:
+        c = await _client()
+        await c.get(f"{_API}/x/web-interface/nav")
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug("bili prewarm skipped: %s", exc)
 
 
 async def _search(c: httpx.AsyncClient, query: str) -> list:
@@ -103,7 +143,10 @@ async def _search(c: httpx.AsyncClient, query: str) -> list:
         f"{_API}/x/web-interface/search/type",
         params={"search_type": "video", "keyword": query, "page": 1},
     )
-    j = r.json() or {}
+    try:
+        j = r.json() or {}
+    except ValueError:
+        j = {}
     if j.get("code") != 0:
         # Stale buvid -> force refresh next time.
         _buvid["b3"] = ""
@@ -117,6 +160,8 @@ async def _search(c: httpx.AsyncClient, query: str) -> list:
             "author": _clean(it.get("author", "")),
             "duration": _parse_dur(it.get("duration")),
             "bvid": it["bvid"],
+            "play": int(it.get("play") or 0) if str(it.get("play") or "0").isdigit() else 0,
+            "typename": str(it.get("typename") or ""),
         })
     return out
 
@@ -129,11 +174,27 @@ def _rank(query: str, cands: list, want_dur: int, relaxed: bool) -> list:
     for c in cands:
         if not q_bad and _BAD_RE.search(c["title"]):
             continue
-        s = _alt._score(query, c["title"], want_dur, c["duration"], relaxed=relaxed)
+        d = c["duration"]
+        # Shorts / ringtone clips / hour-long loops are never "the song".
+        if d and (d < 45 or (want_dur and d > want_dur * 1.6 + 30)):
+            continue
+        s = _alt._score(query, c["title"], want_dur, d, relaxed=relaxed)
+        if s <= 0:
+            continue
         # Bilibili re-uploads: insist on a duration match when we know it.
-        if want_dur and c["duration"]:
-            if abs(want_dur - c["duration"]) > max(20, int(want_dur * 0.12)):
+        if want_dur and d:
+            diff = abs(want_dur - d)
+            if diff > max(20, int(want_dur * 0.12)):
                 s -= 0.4
+            elif diff <= 5:
+                s += 0.1
+        blob = f"{c['title']} {c.get('author', '')}"
+        if _GOOD_RE.search(blob):
+            s += 0.08
+        if c.get("typename") in _MUSIC_TYPES:
+            s += 0.05
+        # Popularity tiebreak: the real upload beats a 40-view re-upload.
+        s += min(0.1, math.log10(max(1, c.get("play", 0))) / 70.0)
         ranked.append((s, c))
     ranked.sort(key=lambda x: x[0], reverse=True)
     return ranked
@@ -173,6 +234,10 @@ def _rm(p):
 async def _pick(c, query, want_dur, relaxed):
     from melody.core import alt_source as _alt
 
+    key = (query.lower().strip(), int(want_dur or 0), bool(relaxed))
+    hit = _PICK_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < _PICK_TTL:
+        return hit[1]
     cands = await _search(c, query)
     if not cands:
         return None
@@ -185,6 +250,9 @@ async def _pick(c, query, want_dur, relaxed):
         LOGGER.info("alt/bilibili: no confident match for %r (best=%.2f %r)",
                     query, best_score, best["title"][:60])
         return None
+    _PICK_CACHE[key] = (time.monotonic(), best)
+    if len(_PICK_CACHE) > 500:
+        _PICK_CACHE.pop(next(iter(_PICK_CACHE)))
     return best
 
 
@@ -204,14 +272,16 @@ async def try_audio(query, want_dur, final_base, cancel_event, relaxed=False) ->
             "bvid": best["bvid"], "cid": cid, "fnval": 16, "fourk": 0,
         })
         dash = ((r.json() or {}).get("data") or {}).get("dash") or {}
-        audios = sorted(dash.get("audio") or [], key=lambda a: a.get("bandwidth", 0), reverse=True)
+        audios = list(dash.get("audio") or [])
+        audios.sort(key=lambda a: abs(int(a.get("bandwidth", 0)) - 132_000))
         tmp = f"{final_base}.bili.part"
         for a in audios[:2]:
             for url in [a.get("baseUrl") or a.get("base_url")] + list(a.get("backupUrl") or a.get("backup_url") or []):
                 if not url:
                     continue
                 try:
-                    n = await _stream(c, url, tmp, cancel_event, 40.0)
+                    n = await _stream(c, url, tmp, cancel_event,
+                                      float(os.getenv("BILI_URL_BUDGET", "20")))
                 except (asyncio.CancelledError, asyncio.TimeoutError):
                     _rm(tmp)
                     raise
@@ -240,7 +310,7 @@ async def _dash(c, bvid, cid, qn):
 
 
 def _best_audio(dash):
-    a = sorted(dash.get("audio") or [], key=lambda x: x.get("bandwidth", 0), reverse=True)
+    a = sorted(dash.get("audio") or [], key=lambda x: abs(int(x.get("bandwidth", 0)) - 132_000))
     return (a[0].get("baseUrl") or a[0].get("base_url")) if a else None
 
 
@@ -259,10 +329,17 @@ def _best_video(dash, qn):
 async def _match(c, title, duration):
     from melody.core import alt_source as _alt
 
-    for q in _alt.query_variants(title)[:3]:
-        best = await _pick(c, q, int(duration or 0), False)
-        if best:
-            return best
+    # All query variants searched in PARALLEL (was sequential: up to 3x ~0.7s).
+    # The earliest variant (most specific) wins when several match.
+    qs = _alt.query_variants(title)[:3]
+    if not qs:
+        return None
+    res = await asyncio.gather(
+        *(_pick(c, q, int(duration or 0), False) for q in qs), return_exceptions=True,
+    )
+    for r in res:
+        if r and not isinstance(r, BaseException):
+            return r
     return None
 
 
