@@ -4750,6 +4750,18 @@ async def _download_audio_impl_orig(
         await gate.release()
 
 
+def _alt_meta_trusted(meta: dict) -> bool:
+    """Alt sources (JioSaavn/Bilibili/SoundCloud) only run on 100% details.
+
+    With YOUTUBE_API_KEY set we demand the Data API v3 answer (exact title +
+    real duration); a title-only guess is what made the wrong song play.
+    ALT_REQUIRE_YTAPI=0 restores the old behaviour.
+    """
+    if not _env_flag("ALT_REQUIRE_YTAPI", True) or not ytapi_enabled():
+        return bool(meta.get("title"))
+    return bool(meta.get("_ytapi") and meta.get("title") and int(meta.get("duration") or 0) > 0)
+
+
 async def _alt_track_meta(video_id: str) -> dict:
     """Title/uploader/duration for the alt-source search. Never raises.
 
@@ -4768,6 +4780,7 @@ async def _alt_track_meta(video_id: str) -> dict:
                 loop.run_in_executor(None, _ytapi_details_sync, video_id), timeout=2.5,
             )
             if info and info.get("title") and info.get("title") != "Unknown":
+                info = dict(info, _ytapi=True)
                 return info
         except Exception:  # noqa: BLE001
             pass
@@ -4807,6 +4820,9 @@ async def _alt_source_download(
     meta = await _alt_track_meta(video_id)
     if not meta:
         LOGGER.info("alt source skipped for %s — no title metadata", video_id)
+        return None
+    if not _alt_meta_trusted(meta):
+        LOGGER.info("alt source skipped for %s — waiting for full YT API v3 details", video_id)
         return None
     try:
         path = await _alt_source.fetch_alternative_audio(
@@ -6833,7 +6849,7 @@ async def resolve_stream_urls(
             # not bot-wall cloud IPs. No download, ffmpeg starts in ~2-3s.
             try:
                 _meta = await asyncio.wait_for(_alt_track_meta(vid_only), timeout=3.0)
-                if _meta and _meta.get("title"):
+                if _meta and _meta.get("title") and _alt_meta_trusted(_meta):
                     resolved = await _alt_source.resolve_alt_stream(
                         str(_meta.get("title") or ""), int(_meta.get("duration") or 0),
                         want_video=want_video,

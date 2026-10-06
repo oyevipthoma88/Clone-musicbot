@@ -497,6 +497,18 @@ async def _jiosaavn_direct(query: str, expected_title: str = None):
     """Search JioSaavn + return direct audio URL (320kbps preferred)."""
     if not query:
         return None
+    # The public saavn.dev / vercel mirrors are dead (timeout / HTTP 402), each
+    # one burned up to 6s per /play. Use the official JioSaavn API path with
+    # the strict matcher (version guard + duration) from alt_source instead.
+    try:
+        from melody.core import alt_source as _alt
+        r = await _alt.saavn_stream_url(expected_title or query, 0)
+        if r and r.get("audio"):
+            return r["audio"]
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.debug(f"official saavn failed: {exc}")
+    if os.getenv("SAAVN_MIRRORS", "0").strip().lower() in {"0", "false", "no", "off"}:
+        return None
     for base in _SAV_BASES:
         try:
             async with _aiohttp_sav.ClientSession() as s:

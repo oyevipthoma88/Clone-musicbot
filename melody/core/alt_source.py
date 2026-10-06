@@ -542,6 +542,24 @@ async def _try_bilibili(query, want_dur, final_base, cancel_event, relaxed=False
     return await _bili.try_audio(query, want_dur, final_base, cancel_event, relaxed=relaxed)
 
 
+# Provider circuit breaker: a source that errors (e.g. Bilibili answering its
+# HTML risk-control page to cloud IPs -> "Expecting value") is skipped for
+# ALT_PROVIDER_COOLDOWN seconds instead of burning a slot on every /play.
+_provider_dead_until: dict = {}
+
+
+def _provider_alive(name: str) -> bool:
+    return time.monotonic() >= _provider_dead_until.get(name, 0.0)
+
+
+def _provider_failed(name: str) -> None:
+    try:
+        cd = float(os.getenv("ALT_PROVIDER_COOLDOWN", "1800"))
+    except ValueError:
+        cd = 1800.0
+    _provider_dead_until[name] = time.monotonic() + cd
+
+
 _PROVIDERS = {
     "jiosaavn": _try_jiosaavn,
     "bilibili": _try_bilibili,
@@ -573,7 +591,7 @@ async def fetch_alternative_audio(
     if "bilibili" not in order and os.getenv("BILI_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}:
         # Old Heroku configs pin ALT_SOURCE_ORDER=jiosaavn,soundcloud — still use Bilibili.
         order.insert(1 if order and order[0] == "jiosaavn" else 0, "bilibili")
-    providers = [(n, _PROVIDERS[n]) for n in order if n in _PROVIDERS]
+    providers = [(n, _PROVIDERS[n]) for n in order if n in _PROVIDERS and _provider_alive(n)]
     if not providers:
         return None
     # SPEED: providers run in PARALLEL. The first one starts immediately,
@@ -598,7 +616,8 @@ async def fetch_alternative_audio(
                 raise
             except Exception as exc:  # noqa: BLE001
                 LOGGER.info("alt/%s failed for %s (%r): %s", name, video_id, q[:40], str(exc)[:200])
-                path = None
+                _provider_failed(name)
+                return None
             if path:
                 break
         if path:
@@ -682,7 +701,8 @@ async def resolve_alt_stream(title: str, duration: int = 0, want_video: bool = F
     tasks = {}
     if not want_video:
         tasks["jiosaavn"] = asyncio.ensure_future(saavn_stream_url(title, duration))
-    tasks["bilibili"] = asyncio.ensure_future(_bili.resolve_urls(title, duration, want_video))
+    if _provider_alive("bilibili"):
+        tasks["bilibili"] = asyncio.ensure_future(_bili.resolve_urls(title, duration, want_video))
     deadline = time.monotonic() + timeout
     results = {}
     try:
@@ -699,6 +719,7 @@ async def resolve_alt_stream(title: str, duration: int = 0, want_video: bool = F
                         results[name] = t.result()
                     except Exception as exc:  # noqa: BLE001
                         LOGGER.info("alt direct %s failed: %s", name, str(exc)[:120])
+                        _provider_failed(name)
                         results[name] = None
             if results.get("jiosaavn"):
                 return results["jiosaavn"]
