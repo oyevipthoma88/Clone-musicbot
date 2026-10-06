@@ -4128,8 +4128,52 @@ async def _safe_shield(fut, video_id: str, timeout: float = 15.0):
             LOGGER.warning("Worker rescue TIMEOUT for %s", video_id)
         except Exception as _we:
             LOGGER.warning("Worker rescue failed: %s", _we)
-        raise
+        # FIX: hang ka matlab YouTube is host ko throttle/block kar raha hai.
+        # Pehle yahin raise ho jata tha -> "playback failed" (gaana nahi bajta).
+        # Ab: YouTube ko blocked mark karo (agle gaane seedha JioSaavn/
+        # SoundCloud se ~2-3s me), aur abhi wale gaane ke liye alt source ko
+        # original download ke saath RACE karao — jo pehle file de, wahi bajega.
+        return await _hang_alt_rescue(fut, video_id)
 
+
+
+async def _hang_alt_rescue(fut, video_id: str):
+    """Race the still-running YouTube future against JioSaavn/SoundCloud."""
+    try:
+        _alt_source.mark_youtube_blocked("download hang")
+    except Exception:  # noqa: BLE001
+        pass
+    budget = max(5.0, _env_float("HANG_RESCUE_BUDGET", 25.0))
+    yt_wait = asyncio.ensure_future(asyncio.shield(fut))
+    yt_wait.add_done_callback(_consume_download_future)
+    alt_task = asyncio.ensure_future(
+        _alt_source_download(video_id, _cache_tag(True))
+    )
+    pending = {yt_wait, alt_task}
+    deadline = time.monotonic() + budget
+    try:
+        while pending:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                break
+            done, pending = await asyncio.wait(
+                pending, timeout=left, return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in done:
+                try:
+                    path = t.result()
+                except Exception as exc:  # noqa: BLE001
+                    LOGGER.info("hang rescue branch failed for %s: %s", video_id, str(exc)[:160])
+                    continue
+                if path and os.path.exists(str(path)):
+                    src = "alt source" if t is alt_task else "YouTube"
+                    LOGGER.info("✅ hang rescue: %s supplied %s", src, video_id)
+                    return path
+    finally:
+        for t in (yt_wait, alt_task):
+            if not t.done():
+                t.cancel()
+    raise asyncio.TimeoutError(f"no source delivered {video_id} (YouTube hung, no alt match)")
 
 async def download_audio(
     video_id: str, audio_only: bool = True, priority: int = 0, owner=None,
