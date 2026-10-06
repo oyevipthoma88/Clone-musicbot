@@ -247,7 +247,8 @@ _VERSION_RE = re.compile(
     r"acoustic|lofi|lo-fi|slowed|reverb|sped|speed\s*up|nightcore|8d|mashup|"
     r"medley|live|female|male|sad|dj|bass\s*boost(?:ed)?|ringtone|bgm|"
     r"tribute|parody|piano|guitar|flute|violin|whistle|beat|beats|rendition|"
-    r"chorus|edit|extended|trap|jhankar|chill|revisited|recreated|mix)\b",
+    r"chorus|edit|extended|trap|jhankar|chill|revisited|recreated|mix|"
+    r"originally|made\s*famous|in\s*the\s*style|version|latin|kids|lullaby)\b",
     re.I,
 )
 
@@ -272,6 +273,14 @@ def _score(query: str, cand_title: str, want_dur: int, cand_dur: int, relaxed: b
     first = next((w for w in re.findall(r"[a-z0-9\u0900-\u097f]+", translit(query).lower()) if len(w) > 1), "")
     if first and not any(_tok_match(first, x) for x in c):
         return 0.0
+    # A one-word song-name query ('Kesariya') matched an unrelated folk song
+    # with the same word. Demand a second word from the real title (artist /
+    # movie) unless the candidate itself is just that short name.
+    src = _SRC_TITLE.get()
+    if len(q) <= 1 and src and len(c) > 2:
+        extra = _tokens(clean_title(src)) - q
+        if extra and not any(_tok_match(w, x) for w in extra for x in c):
+            return 0.0
     min_overlap = 0.34 if relaxed else 0.5
     if overlap < min_overlap:
         return 0.0  # title does not match — never play a random song
@@ -560,8 +569,118 @@ def _provider_failed(name: str) -> None:
     _provider_dead_until[name] = time.monotonic() + cd
 
 
+# ── Gaana (official API, 128kbps AAC HLS) ───────────────────────────────
+# Second Indian catalogue next to JioSaavn: answers from cloud IPs, full
+# tracks (not previews). Stream URLs come AES-CBC encrypted in songDetail
+# (key used by the Gaana web player; IV is embedded in the message).
+_GAANA_API = "https://gaana.com/apiv2"
+_GAANA_KEY = b"gy1t#b@jl(b$wtme"
+_GAANA_HEADERS = {"User-Agent": _UA, "Referer": "https://gaana.com/", "Origin": "https://gaana.com"}
+
+
+def _gaana_decrypt(message: str) -> Optional[str]:
+    try:
+        import base64
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        off = int(message[0])
+        iv = message[off:off + 16].encode()
+        ct = base64.b64decode(message[off + 16:] + "==")
+        d = Cipher(algorithms.AES(_GAANA_KEY), modes.CBC(iv)).decryptor()
+        pt = d.update(ct) + d.finalize()
+        pad = pt[-1]
+        if 0 < pad <= 16:
+            pt = pt[:-pad]
+        url = pt.decode("utf-8", "ignore").strip()
+        return url if url.startswith("https://") else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def gaana_stream_url(title: str, duration: int = 0, query: str = "") -> Optional[dict]:
+    """Best confident Gaana track for the YouTube title -> HLS URL dict."""
+    if not enabled() or not title or not _provider_alive("gaana"):
+        return None
+    want_dur = int(duration or 0)
+    _SRC_TITLE.set(title)
+    timeout = httpx.Timeout(8.0, connect=4.0)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        for q in ([query] if query else query_variants(title)[:3]):
+            r = await client.post(_GAANA_API, params={
+                "country": "IN", "page": 0, "secType": "track", "type": "search", "keyword": q,
+            }, headers=_GAANA_HEADERS, content=b"")
+            if r.status_code != 200:
+                raise RuntimeError(f"gaana search HTTP {r.status_code}")
+            cands = []
+            for grp in (r.json() or {}).get("gr") or []:
+                if grp.get("ty") != "Track":
+                    continue
+                for it in grp.get("gd") or []:
+                    if it.get("seo"):
+                        cands.append({"title": html.unescape(f"{it.get('ti', '')} {it.get('sti', '')}"),
+                                      "seo": it["seo"]})
+            # Title-only pre-rank, then confirm real length via songDetail.
+            pre = sorted(((_score(q, c["title"], 0, 0), c) for c in cands[:8]),
+                         key=lambda x: x[0], reverse=True)
+            for pscore, c in pre[:2]:
+                if pscore <= 0:
+                    break
+                d = await client.post(_GAANA_API, params={"type": "songDetail", "seokey": c["seo"]},
+                                      headers=_GAANA_HEADERS, content=b"")
+                tr = ((d.json() or {}).get("tracks") or [None])[0] if d.status_code == 200 else None
+                if not tr:
+                    continue
+                try:
+                    cdur = int(tr.get("duration") or 0)
+                except (TypeError, ValueError):
+                    cdur = 0
+                score = _score(q, c["title"], want_dur, cdur)
+                if not _good_enough(score, want_dur):
+                    continue
+                urls = tr.get("urls") or {}
+                for qual in ("high", "medium", "auto"):
+                    msg = (urls.get(qual) or {}).get("message")
+                    url = _gaana_decrypt(msg) if msg else None
+                    if url:
+                        LOGGER.info("🔗 alt/gaana direct -> %r (score %.2f, %s)", c["title"][:60], score, qual)
+                        return {"audio": url, "video": None, "is_live": False,
+                                "headers": dict(_GAANA_HEADERS), "source": "gaana",
+                                "expires_at": time.time() + 1800}
+    return None
+
+
+async def _try_gaana(query, want_dur, final_base, cancel_event, relaxed=False) -> Optional[str]:
+    """Download provider: remux Gaana HLS to a local .m4a with ffmpeg (no re-encode)."""
+    res = await gaana_stream_url(_SRC_TITLE.get() or query, want_dur, query=query)
+    if not res:
+        return None
+    final = f"{final_base}.m4a"
+    tmp = f"{final_base}.gaana.part.m4a"
+    proc = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-nostdin", "-loglevel", "error", "-y",
+        "-headers", f"Referer: https://gaana.com/\r\nUser-Agent: {_UA}\r\n",
+        "-i", res["audio"], "-vn", "-c", "copy", "-bsf:a", "aac_adtstoasc", tmp,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        _, err = await asyncio.wait_for(proc.communicate(), float(os.getenv("GAANA_DL_TIMEOUT", "60")))
+    except asyncio.CancelledError:
+        proc.kill()
+        _rm(tmp)
+        raise
+    except asyncio.TimeoutError:
+        proc.kill()
+        _rm(tmp)
+        return None  # slow, not broken — do not trip the provider breaker
+    if proc.returncode != 0 or not os.path.exists(tmp) or os.path.getsize(tmp) < _MIN_BYTES:
+        _rm(tmp)
+        raise RuntimeError(f"gaana ffmpeg failed: {(err or b'')[-160:]!r}")
+    os.replace(tmp, final)
+    return final
+
+
 _PROVIDERS = {
     "jiosaavn": _try_jiosaavn,
+    "gaana": _try_gaana,
     "bilibili": _try_bilibili,
     "soundcloud": _try_soundcloud,
 }
@@ -588,6 +707,9 @@ async def fetch_alternative_audio(
         return None  # mixes / jukeboxes / podcasts — no sane single-track match
     final_base = f"/tmp/melody_{video_id}_{tag}"
     order = [p.strip() for p in os.getenv("ALT_SOURCE_ORDER", "jiosaavn,bilibili,soundcloud").split(",")]
+    # Gaana is HLS: a full download takes ~20-40s, so it is NOT in the default
+    # download race (it plays instantly via the direct-stream race instead).
+    # Add it explicitly with ALT_SOURCE_ORDER=jiosaavn,gaana,... if wanted.
     if "bilibili" not in order and os.getenv("BILI_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}:
         # Old Heroku configs pin ALT_SOURCE_ORDER=jiosaavn,soundcloud — still use Bilibili.
         order.insert(1 if order and order[0] == "jiosaavn" else 0, "bilibili")
@@ -701,6 +823,8 @@ async def resolve_alt_stream(title: str, duration: int = 0, want_video: bool = F
     tasks = {}
     if not want_video:
         tasks["jiosaavn"] = asyncio.ensure_future(saavn_stream_url(title, duration))
+        if os.getenv("GAANA_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}:
+            tasks["gaana"] = asyncio.ensure_future(gaana_stream_url(title, duration))
     if _provider_alive("bilibili"):
         tasks["bilibili"] = asyncio.ensure_future(_bili.resolve_urls(title, duration, want_video))
     deadline = time.monotonic() + timeout
@@ -723,9 +847,12 @@ async def resolve_alt_stream(title: str, duration: int = 0, want_video: bool = F
                         results[name] = None
             if results.get("jiosaavn"):
                 return results["jiosaavn"]
+            # Gaana is the next-best official studio audio once JioSaavn answered empty.
+            if results.get("gaana") and "jiosaavn" in results:
+                return results["gaana"]
             if results.get("bilibili") and (want_video or "jiosaavn" in results):
                 return results["bilibili"]
-        return results.get("jiosaavn") or results.get("bilibili")
+        return results.get("jiosaavn") or results.get("gaana") or results.get("bilibili")
     finally:
         for t in tasks.values():
             if not t.done():

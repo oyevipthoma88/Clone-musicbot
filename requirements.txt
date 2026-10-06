@@ -52,3 +52,4 @@ uvloop>=0.22.1,<1
 PyYAML>=6.0.3,<7
 httpx[socks]
 PySocks
+cryptography>=42
