@@ -116,6 +116,10 @@ class Config:
     # key hits its daily quota (403 quotaExceeded).
     YOUTUBE_API_KEY: str = _env_str("YOUTUBE_API_KEY") or _env_str("YT_API_KEY")
 
+    # ⚡ ShrutiBots YouTube API (https://shrutibots.site) — key from @SHRUTIAPIBOT.
+    # Comma-separate several keys for auto-rotation. Read by core/shruti_api.py.
+    SHRUTI_API_KEY: str = _env_str("SHRUTI_API_KEY")
+
     # Lyrics
     GENIUS_API_TOKEN: str = _env_str("GENIUS_API_TOKEN")
 

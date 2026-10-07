@@ -68,6 +68,10 @@
       "value": "1",
       "required": false
     },
+    "SHRUTI_API_KEY": {
+      "description": "ShrutiBots API key from @SHRUTIAPIBOT \u2014 plays /play and /vplay without YouTube cookies or IP blocks. Comma-separate multiple keys to auto-rotate.",
+      "required": false
+    },
     "YOUTUBE_API_KEY": {
       "description": "YouTube Data API v3 key \u2014 makes song search/metadata resolve in ~0.3s instead of several seconds. Comma-separate multiple keys to auto-rotate on quota.",
       "required": false

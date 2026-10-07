@@ -254,6 +254,7 @@ from melody.core.mega_bypass import apply_mega_bypass, refresh_cookies_from_url
 from melody.config import Config
 from melody.logging import LOGGER, redact_sensitive_text, send_error_log
 from melody.core import alt_source as _alt_source
+from melody.core import shruti_api as _shruti
 
 
 # yt-dlp loads namespace plugins from inside YoutubeDL.__init__. Two concurrent
@@ -998,6 +999,10 @@ if _ON_CLOUD_HOST:
 def should_try_direct_stream() -> bool:
     # Direct stream is the fastest path. If a cloud CDN route rejects it,
     # call.py keeps the download fallback running in parallel.
+    # With ShrutiAPI on, the blocked-IP direct CDN race only wastes time and
+    # burns cookies — skip it unless DIRECT_STREAM is set explicitly.
+    if "DIRECT_STREAM" not in os.environ and os.getenv("SHRUTI_API_KEY", "").strip():
+        return False
     return os.getenv("DIRECT_STREAM", "true").strip().lower() not in {
         "0", "false", "no", "off",
     }
@@ -4857,6 +4862,24 @@ async def _download_audio_locked(
     YouTube already handed a growing prefix to playback it is never killed
     (that would cut the playing song); otherwise the loser is cancelled.
     """
+    # ⚡ FASTEST + IP-SAFE PATH: ShrutiBots API downloads on its own servers,
+    # so Heroku's blocked IP / dead cookies never matter. Used for BOTH /play
+    # (audio) and /vplay (video). Any failure falls through to the old chain.
+    if _shruti.enabled() and is_valid_video_id(video_id):
+        try:
+            sp = await _shruti.download(video_id, tag, audio_only=audio_only,
+                                        cancel_event=cancel_event)
+        except asyncio.CancelledError:
+            if cancel_event is not None and cancel_event.is_set():
+                raise _DownloadCancelled("shruti download superseded")
+            raise
+        if sp:
+            if early_state is not None and not early_state.ready.is_set():
+                early_state.path = sp
+                early_state.ready.set()
+            return sp
+        LOGGER.info("ShrutiAPI miss for %s — falling back to yt-dlp/alt chain", video_id)
+
     # YouTube known-walled on this host: skip the 10-20s yt-dlp ladder.
     # /vplay must stay VIDEO: never short-circuit to an audio-only alt file.
     if audio_only and _alt_source.youtube_blocked():
