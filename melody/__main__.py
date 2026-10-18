@@ -760,7 +760,9 @@ async def main():
     # Otherwise the first direct resolver starts Deno/bgutil on the command
     # path and adds the 4-8s delay visible in production logs. Low-memory
     # workers remain protected; other workers can explicitly opt out with 0.
-    if not Config._LOW_MEMORY_PROFILE or Config.STARTUP_WARMUPS:
+    from melody.core import shruti_api as _shruti_startup
+    _skip_legacy_warmup = _shruti_startup.enabled()
+    if not _skip_legacy_warmup and (not Config._LOW_MEMORY_PROFILE or Config.STARTUP_WARMUPS):
         from melody.core.ytdl import warm_up_bgutil_server
         try:
             # Do not merely spawn this task: a first /play can arrive before
@@ -789,11 +791,12 @@ async def main():
 
     # Bilibili backup: open its pooled connection + cookie now so a YouTube
     # block never costs an extra handshake on the first /play.
-    try:
-        from melody.core import bili_source as _bili
-        spawn(_bili.prewarm())
-    except Exception as exc:  # noqa: BLE001
-        LOGGER.info("bilibili warmup skipped: %s", exc)
+    if not _skip_legacy_warmup:
+        try:
+            from melody.core import bili_source as _bili
+            spawn(_bili.prewarm())
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.info("bilibili warmup skipped: %s", exc)
 
     # R14 FIX: keep resident memory from ratcheting up until Heroku reports
     # "Error R14 (Memory quota exceeded)". See utils/memguard.py.

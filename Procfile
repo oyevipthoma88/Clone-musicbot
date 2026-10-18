@@ -1,1 +1,1 @@
-worker: bash scripts/start-with-warp.sh
+worker: python -m melody

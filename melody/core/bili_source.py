@@ -65,6 +65,9 @@ _buvid_lock = asyncio.Lock()
 
 
 def enabled() -> bool:
+    from melody.core import shruti_api as _shruti
+    if _shruti.enabled():
+        return False
     return os.getenv("BILI_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 

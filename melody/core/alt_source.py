@@ -79,6 +79,9 @@ def is_audio_only_file(path) -> bool:
 
 
 def enabled() -> bool:
+    from melody.core import shruti_api as _shruti
+    if _shruti.enabled():
+        return False
     return os.getenv("ALT_SOURCE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 

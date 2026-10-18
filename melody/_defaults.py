@@ -15,7 +15,10 @@ _DEFAULTS = {
     "DISABLE_DIRECT_STREAM": "0",
     "PROXY_DIRECT_STREAM": "false",
     "YT_WORKER_URL": "",                 # Worker off
-    "COOKIES_URL": "",                   # Gist fetch off (JioSaavn cookies nahi chahiye)
+    "COOKIES_URL": "",
+    "ALT_SOURCE": "0",
+    "BILI_ENABLE": "0",
+    "FORCE_DIRECT_STREAM": "1",                   # Gist fetch off (JioSaavn cookies nahi chahiye)
 
     # ═══ yt-dlp — sirf metadata extraction ke liye ═══
     "YT_PLAYER_CLIENTS": "tv,mweb",
@@ -93,9 +96,7 @@ if _shruti_on():
         orig_direct = getattr(mod, "should_try_direct_stream", None)
         if orig_direct is not None and not getattr(orig_direct, "_shruti", False):
             def should_try_direct_stream() -> bool:
-                if os.getenv("FORCE_DIRECT_STREAM", "0").strip().lower() in {"1", "true", "yes", "on"}:
-                    return orig_direct()
-                return False
+                return True
             should_try_direct_stream._shruti = True  # type: ignore[attr-defined]
             mod.should_try_direct_stream = should_try_direct_stream
 

@@ -387,15 +387,17 @@ async def _play_core(client: Client, message: Message, video: bool = False, forc
 
         # ============ FAST RACE (YouTube + JioSaavn + SoundCloud) ============
         # Parallel race — jo pehle gaana de, wahi stream ho.
-        # JioSaavn 55% title match verify karta hai — galat gaana skip.
+        # When Shruti API is configured, skip JioSaavn/SoundCloud alternate race.
         try:
-            from melody.core.yt_fast import race_fastest as _fast_race
-            from melody.core.ytdl import LOGGER as _yt_log
-            _query_for_race = query if query and not query.lower().startswith(("http://","https://")) else info.get("title","")
-            _url, _src = await _fast_race(_query_for_race, info["id"], info.get("title", want_video=video), timeout=1.5)
-            if _url:
-                info["stream_url"] = _url
-                _yt_log.info(f"⚡ Fast race won: {_src} for {info['id']}")
+            from melody.core import shruti_api as _shruti_race
+            if not _shruti_race.enabled():
+                from melody.core.yt_fast import race_fastest as _fast_race
+                from melody.core.ytdl import LOGGER as _yt_log
+                _query_for_race = query if query and not query.lower().startswith(("http://","https://")) else info.get("title","")
+                _url, _src = await _fast_race(_query_for_race, info["id"], info.get("title", want_video=video), timeout=1.5)
+                if _url:
+                    info["stream_url"] = _url
+                    _yt_log.info(f"⚡ Fast race won: {_src} for {info['id']}")
         except Exception as _e:
             try:
                 from melody.logging import LOGGER as _L

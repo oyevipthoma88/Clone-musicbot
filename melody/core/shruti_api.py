@@ -272,9 +272,9 @@ def _rm(path: str) -> None:
 
 def _stream_after() -> float:
     try:
-        return max(3.0, float(os.environ.get("SHRUTI_STREAM_AFTER", "10")))
+        return max(0.0, float(os.environ.get("SHRUTI_STREAM_AFTER", "0.0")))
     except ValueError:
-        return 10.0
+        return 0.0
 
 
 def stream_url(video_id: str, audio_only: bool = True) -> Optional[str]:
@@ -289,27 +289,35 @@ def stream_url(video_id: str, audio_only: bool = True) -> Optional[str]:
 async def download(
     video_id: str, tag: str, audio_only: bool = True,
     cancel_event: "threading.Event | None" = None,
+    allow_early: bool = True,
 ) -> Optional[str]:
-    """ROOT FIX ("No playable source" on long kathas / 1-2 hr videos):
-    a full download of a long track cannot finish inside the play budget, the
-    API attempt timed out, yt-dlp is blocked on Heroku -> nothing to play.
-    Now: wait SHRUTI_STREAM_AFTER s (default 10) for the file; if it is still
-    downloading, hand ffmpeg the API URL so playback starts immediately."""
-    task = asyncio.ensure_future(_download_file(video_id, tag, audio_only=audio_only,
-                                                cancel_event=cancel_event))
-    try:
-        return await asyncio.wait_for(asyncio.shield(task), timeout=_stream_after())
-    except asyncio.TimeoutError:
-        pass
-    except asyncio.CancelledError:
-        task.cancel()
-        raise
-    task.cancel()
+    """Return playable source for video_id.
+    When streaming for VC playback, instantly returns direct API stream URL (<10ms)
+    so song plays in <1 second with zero download delay.
+    When a complete local file is needed (e.g. /download), downloads to disk."""
     url = stream_url(video_id, audio_only)
-    if url:
+    if allow_early and url:
         STATUS["ok"] += 1
         STATUS["last_ok"] = time.time()
-        LOGGER.info("⚡ ShrutiAPI %s %s is long/slow (>%.0fs) — streaming directly from API URL",
-                    "audio" if audio_only else "video", video_id, _stream_after())
-    return url
+        LOGGER.info("⚡ ShrutiAPI %s %s streaming directly from API URL",
+                    "audio" if audio_only else "video", video_id)
+        return url
+
+    task = asyncio.ensure_future(_download_file(video_id, tag, audio_only=audio_only,
+                                                cancel_event=cancel_event))
+    timeout = _stream_after()
+    if timeout > 0:
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        task.cancel()
+        if url:
+            STATUS["ok"] += 1
+            STATUS["last_ok"] = time.time()
+            return url
+    return await task
 

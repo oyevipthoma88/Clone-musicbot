@@ -132,6 +132,8 @@ async def memory_guard() -> None:
     # to blow through the quota between samples (log: 102% -> 157% in 18 s).
     interval = _env_int("MEM_CHECK_SECONDS", 5)
     peak = 0.0
+    last_warn = 0.0
+    last_warn_rss = 0.0
     LOGGER.info(
         "🧠 memguard active: trim above %d MB (dyno quota %s, every %ds)",
         soft_limit, f"{quota} MB" if quota else "unknown", interval,
@@ -155,14 +157,18 @@ async def memory_guard() -> None:
             # the memory (yt-dlp/InnerTube/thumbnail buffers) before Heroku
             # starts swapping and every command gets slower.
             if quota and after > quota * 0.80:
-                LOGGER.warning(
-                    "⚠️ memguard: RSS %.0f MB is near the %d MB dyno quota — "
-                    "dropping caches to avoid Error R14.", after, quota,
-                )
-                _emergency_release()
-                gc.collect()
-                _malloc_trim()
-                LOGGER.info("🧯 memguard: RSS after emergency release: %.0f MB", rss_mb())
+                now_t = asyncio.get_running_loop().time()
+                if now_t - last_warn >= 60.0 or after > last_warn_rss:
+                    last_warn = now_t
+                    last_warn_rss = after
+                    LOGGER.warning(
+                        "⚠️ memguard: RSS %.0f MB is near the %d MB dyno quota — "
+                        "dropping caches to avoid Error R14.", after, quota,
+                    )
+                    _emergency_release()
+                    gc.collect()
+                    _malloc_trim()
+                    LOGGER.info("🧯 memguard: RSS after emergency release: %.0f MB", rss_mb())
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — a watchdog must never die
