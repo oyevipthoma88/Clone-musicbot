@@ -4874,6 +4874,10 @@ async def _download_audio_locked(
                 early_state.path = sp
                 early_state.ready.set()
             return sp
+        # SHRUTI-ONLY MODE: yt-dlp from Heroku always hits YouTube's bot wall,
+        # so report the API's real reason instead of a misleading yt-dlp error.
+        if os.environ.get("SHRUTI_FALLBACK_YTDLP", "0").lower() not in {"1", "true", "yes"}:
+            raise RuntimeError(f"ShrutiAPI failed for {video_id}: {_shruti.last_error()}")
         LOGGER.info("ShrutiAPI miss for %s — falling back to yt-dlp/alt chain", video_id)
 
     # YouTube known-walled on this host: skip the 10-20s yt-dlp ladder.
