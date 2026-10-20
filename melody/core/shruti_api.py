@@ -94,6 +94,38 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+_last_revalidate = 0.0
+
+
+async def _revalidate_keys() -> list[str]:
+    """All keys paused: re-check them via /autoplay (spends NO daily quota)
+    at most once a minute, so a transient 401/403 or a key you just renewed
+    on @SHRUTIAPIBOT is picked up without restarting the dyno."""
+    global _last_revalidate
+    now = time.time()
+    if now - _last_revalidate < 60:
+        return []
+    _last_revalidate = now
+    client = _get_client()
+    good = []
+    for key in _keys():
+        try:
+            r = await client.get(f"{_base()}/autoplay",
+                                 params={"video_id": "dQw4w9WgXcQ", "api_key": key}, timeout=8.0)
+            if r.status_code == 200:
+                _key_cooldown.pop(key, None)
+                good.append(key)
+            else:
+                STATUS["last_error"] = f"key ...{key[-4:]}: {r.status_code} {r.text[:120]}"
+                LOGGER.error("🔴 ShrutiAPI key ...%s still rejected: %s %s",
+                             key[-4:], r.status_code, r.text[:120])
+        except Exception as exc:  # noqa: BLE001
+            STATUS["last_error"] = repr(exc)[:200]
+    if good:
+        LOGGER.info("🟢 ShrutiAPI: %d key(s) usable again", len(good))
+    return good
+
+
 def _live_keys() -> list[str]:
     now = time.time()
     return [k for k in _keys() if _key_cooldown.get(k, 0) <= now]
@@ -138,7 +170,7 @@ async def health_check() -> dict:
                 d = kr.text[:120]
                 reasons.append(f"...{key[-4:]}={kr.status_code} {d}")
                 if kr.status_code in (401, 403) and "IP" not in d:
-                    _key_cooldown[key] = time.time() + 6 * 3600
+                    _key_cooldown[key] = time.time() + 1800
         except Exception as exc:  # noqa: BLE001
             reasons.append(f"...{key[-4:]}={exc!r}"[:120])
     STATUS["valid_keys"] = valid
@@ -223,7 +255,10 @@ async def _download_file(
     """
     keys = _live_keys()
     if not keys:
-        _fail("no usable SHRUTI_API_KEY (all keys paused/expired)")
+        keys = await _revalidate_keys()
+    if not keys:
+        _fail("no usable SHRUTI_API_KEY (all keys paused/expired) — "
+              + str(STATUS.get("last_error") or "check key in @SHRUTIAPIBOT"))
         LOGGER.error("🔴 ShrutiAPI: no usable key — get a new one from @SHRUTIAPIBOT")
         return None
     kind = "audio" if audio_only else "video"
@@ -243,10 +278,10 @@ async def _download_file(
                             LOGGER.warning("ShrutiAPI %s %s -> HTTP %s: %s", kind, video_id, s, body)
                             low = body.lower()
                             if s == 401 or (s == 403 and "your ip" not in low):
-                                _cool(key, 6 * 3600, f"{s} {body}")
+                                _cool(key, 1800, f"{s} {body}")
                                 break  # next key
                             if s == 429 and "quota" in low:
-                                _cool(key, 3 * 3600, body)
+                                _cool(key, 1800, body)
                                 break  # next key
                             if s == 403:  # IP blocked: other keys/domains won't help now
                                 _fail(f"{s} {body}")
