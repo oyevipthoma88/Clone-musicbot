@@ -6769,33 +6769,16 @@ async def resolve_stream_urls(
         # The first source that returns a usable format wins, so the bot can
         # join the VC and start the song without waiting for a full extraction.
         vid_only = _extract_video_id(target) or video_id
+        # ROOT FIX ("VC aata hai par gana nahi bajta"): the ShrutiAPI
+        # /stream URL is NOT a live stream — the API first fetches the track
+        # from YouTube on its own servers and only then sends the file. FFmpeg
+        # opened it, got nothing in time, ended after ~1s, and every "resume"
+        # re-hit the API (endless resume/StreamEnded loop, silent VC). With
+        # Shruti enabled we skip direct streaming and let the caller use the
+        # download path, which fetches a complete local file in a few seconds
+        # (seekable, A/V aligned for /vplay, resume-safe).
         if _shruti.enabled() and is_valid_video_id(vid_only):
-            if want_video:
-                v_url = _shruti.stream_url(vid_only, audio_only=False)
-                if v_url:
-                    LOGGER.info("⚡ ShrutiAPI direct video stream URL ready for %s", vid_only)
-                    result = {
-                        "video": v_url,
-                        "audio": v_url,
-                        "headers": {},
-                        "is_live": False,
-                        "expires_at": _time_mod.time() + 7200,
-                    }
-                    _stream_url_cache[key] = result
-                    return result
-            else:
-                a_url = _shruti.stream_url(vid_only, audio_only=True)
-                if a_url:
-                    LOGGER.info("⚡ ShrutiAPI direct audio stream URL ready for %s", vid_only)
-                    result = {
-                        "video": None,
-                        "audio": a_url,
-                        "headers": {},
-                        "is_live": False,
-                        "expires_at": _time_mod.time() + 7200,
-                    }
-                    _stream_url_cache[key] = result
-                    return result
+            raise ValueError("ShrutiAPI enabled: use complete local file instead of remote URL")
 
         # run_in_executor() already returns an awaitable Future. Wrapping that
         # in create_task() raises ``TypeError: a coroutine was expected`` and
