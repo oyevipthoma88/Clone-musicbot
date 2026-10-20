@@ -138,8 +138,14 @@ if _shruti_on():
                             except Exception:  # noqa: BLE001
                                 pass
                         return sp
-                    _log("info", "ShrutiAPI miss for %s after %.1fs — yt-dlp/alt chain (4s cap)",
-                         video_id, _time.monotonic() - t0)
+                    _log("warning", "ShrutiAPI miss for %s after %.1fs: %s",
+                         video_id, _time.monotonic() - t0, sh.last_error())
+                    # SHRUTI-ONLY MODE (default): yt-dlp on Heroku always hits
+                    # "Sign in to confirm you're not a bot", so falling back only
+                    # wastes time and hides the real reason. Report the API's
+                    # own error instead. SHRUTI_FALLBACK_YTDLP=1 re-enables it.
+                    if os.environ.get("SHRUTI_FALLBACK_YTDLP", "0").lower() not in {"1", "true", "yes"}:
+                        raise RuntimeError(f"ShrutiAPI failed for {video_id}: {sh.last_error()}")
                 tok = _SKIP.set(True)
                 try:
                     return await orig_impl(video_id, audio_only, tag, priority=priority,
