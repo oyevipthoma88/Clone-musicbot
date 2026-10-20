@@ -8,7 +8,8 @@ no PO-token and no Heroku IP ever touches YouTube for the media itself.
 Env vars:
   SHRUTI_API_KEY          one key, or several comma-separated (auto-rotation on
                           quota / expiry / block / network error)
-  SHRUTI_API_URL          optional, defaults to https://shrutibots.site
+  SHRUTI_API_URL          optional, defaults to https://api.shrutibots.in
+                          (falls back to https://shrutibots.site on network errors)
   SHRUTI_TIMEOUT          optional total seconds per attempt (default 60)
   SHRUTI_HEALTH_INTERVAL  seconds between "API ACTIVE?" checks (default 1800)
 
@@ -60,8 +61,19 @@ def enabled() -> bool:
     return bool(_keys())
 
 
+_DEFAULT_BASES = ("https://api.shrutibots.in", "https://shrutibots.site")
+
+
+def _bases() -> list[str]:
+    """Official base first (per /docs), legacy domain as network fallback."""
+    custom = (os.environ.get("SHRUTI_API_URL") or "").strip().rstrip("/")
+    out = [custom] if custom else []
+    out += [b for b in _DEFAULT_BASES if b not in out]
+    return out
+
+
 def _base() -> str:
-    return (os.environ.get("SHRUTI_API_URL") or "https://shrutibots.site").rstrip("/")
+    return _bases()[0]
 
 
 def _timeout() -> float:
@@ -195,71 +207,93 @@ def start_monitor() -> None:
     _monitor_task = asyncio.get_running_loop().create_task(_loop())
 
 
+def _fail(why: str) -> None:
+    STATUS["fail"] += 1
+    STATUS["last_error"] = why[:200]
+
+
 async def _download_file(
     video_id: str, tag: str, audio_only: bool = True,
-    cancel_event: "threading.Event | None" = None,
 ) -> Optional[str]:
-    """Download into /tmp/melody_<video_id>_<tag>.<ext>; return path or None."""
+    """Download the full file into /tmp/melody_<video_id>_<tag>.<ext>.
+
+    Rotates keys on key errors, retries 429/500/network errors briefly and
+    falls back to the legacy domain on network errors. Every failure is
+    logged with the API's own reason, so "gana nahi baja" is never a mystery.
+    """
     keys = _live_keys()
     if not keys:
+        _fail("no usable SHRUTI_API_KEY (all keys paused/expired)")
+        LOGGER.error("🔴 ShrutiAPI: no usable key — get a new one from @SHRUTIAPIBOT")
         return None
     kind = "audio" if audio_only else "video"
-    url = f"{_base()}/stream/{video_id}"
     client = _get_client()
     t0 = time.monotonic()
+    tmp = f"/tmp/melody_{video_id}_{tag}.shruti.part"
 
     for key in keys:
-        tmp = f"/tmp/melody_{video_id}_{tag}.shruti.part"
-        try:
-            async with client.stream("GET", url, params={"type": kind, "api_key": key}) as r:
-                if r.status_code != 200:
-                    body = (await r.aread())[:300].decode("utf-8", "ignore")
-                    s = r.status_code
-                    if s in (401, 403) and "IP" not in body:
-                        _cool(key, 6 * 3600, f"{s} {body}")
-                        continue
-                    if s == 429 and "quota" in body.lower():
-                        _cool(key, 3 * 3600, body)
-                        continue
-                    if s == 429:
-                        await asyncio.sleep(1.5)
-                        continue
-                    LOGGER.info("ShrutiAPI %s for %s: %s", s, video_id, body)
-                    STATUS["fail"] += 1
-                    STATUS["last_error"] = f"{s} {body}"[:200]
-                    return None  # 400/500: video-side problem, other keys won't help
-                ct = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
-                if ct.startswith("application/json") or ct.startswith("text/"):
-                    LOGGER.info("ShrutiAPI non-media reply for %s: %s", video_id, ct)
-                    return None
-                ext = _CT_EXT.get(ct) or ("m4a" if audio_only else "mp4")
-                size = 0
-                with open(tmp, "wb") as fh:
-                    async for chunk in r.aiter_bytes(256 * 1024):
-                        if cancel_event is not None and cancel_event.is_set():
-                            raise asyncio.CancelledError()
-                        fh.write(chunk)
-                        size += len(chunk)
-            if size < 10 * 1024:
-                LOGGER.info("ShrutiAPI tiny file (%sB) for %s", size, video_id)
-                _rm(tmp)
-                return None
-            final = f"/tmp/melody_{video_id}_{tag}.{ext}"
-            os.replace(tmp, final)
-            STATUS["ok"] += 1
-            STATUS["last_ok"] = time.time()
-            LOGGER.info("⚡ ShrutiAPI %s %s ready in %.1fs (%d KB)",
-                        kind, video_id, time.monotonic() - t0, size // 1024)
-            return final
-        except asyncio.CancelledError:
-            _rm(tmp)
-            raise
-        except Exception as exc:  # noqa: BLE001
-            _rm(tmp)
-            LOGGER.warning("ShrutiAPI error for %s with key ...%s: %r - trying next key", video_id, key[-4:], exc)
-            STATUS["last_error"] = repr(exc)[:200]
-            continue
-    STATUS["fail"] += 1
+        for base in _bases():
+            url = f"{base}/stream/{video_id}"
+            for attempt in range(2):
+                try:
+                    async with client.stream("GET", url, params={"type": kind, "api_key": key}) as r:
+                        if r.status_code != 200:
+                            body = (await r.aread())[:300].decode("utf-8", "ignore")
+                            s = r.status_code
+                            LOGGER.warning("ShrutiAPI %s %s -> HTTP %s: %s", kind, video_id, s, body)
+                            low = body.lower()
+                            if s == 401 or (s == 403 and "your ip" not in low):
+                                _cool(key, 6 * 3600, f"{s} {body}")
+                                break  # next key
+                            if s == 429 and "quota" in low:
+                                _cool(key, 3 * 3600, body)
+                                break  # next key
+                            if s == 403:  # IP blocked: other keys/domains won't help now
+                                _fail(f"{s} {body}")
+                                return None
+                            if s in (429, 500, 502, 503, 504) and attempt == 0:
+                                await asyncio.sleep(1.0)
+                                continue
+                            _fail(f"{s} {body}")
+                            return None  # 400 / repeated 500: video-side problem
+                        ct = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+                        if ct.startswith("application/json") or ct.startswith("text/"):
+                            body = (await r.aread())[:300].decode("utf-8", "ignore")
+                            LOGGER.warning("ShrutiAPI non-media reply for %s (%s): %s", video_id, ct, body)
+                            _fail(f"non-media {ct}: {body}")
+                            return None
+                        ext = _CT_EXT.get(ct) or ("m4a" if audio_only else "mp4")
+                        size = 0
+                        with open(tmp, "wb") as fh:
+                            async for chunk in r.aiter_bytes(256 * 1024):
+                                fh.write(chunk)
+                                size += len(chunk)
+                    if size < 10 * 1024:
+                        LOGGER.warning("ShrutiAPI tiny file (%sB) for %s", size, video_id)
+                        _rm(tmp)
+                        _fail(f"tiny file {size}B")
+                        return None
+                    final = f"/tmp/melody_{video_id}_{tag}.{ext}"
+                    os.replace(tmp, final)
+                    STATUS["ok"] += 1
+                    STATUS["last_ok"] = time.time()
+                    LOGGER.info("⚡ ShrutiAPI %s %s ready in %.1fs (%d KB) via %s",
+                                kind, video_id, time.monotonic() - t0, size // 1024, base)
+                    return final
+                except asyncio.CancelledError:
+                    _rm(tmp)
+                    raise
+                except Exception as exc:  # noqa: BLE001  network / timeout
+                    _rm(tmp)
+                    LOGGER.warning("ShrutiAPI network error for %s via %s: %r", video_id, base, exc)
+                    STATUS["last_error"] = repr(exc)[:200]
+                    break  # try the next domain
+            else:
+                continue
+            # inner loop broke: key error -> next key, network error -> next base
+            if key in _key_cooldown and _key_cooldown[key] > time.time():
+                break
+    _fail(STATUS.get("last_error") or "all keys/domains failed")
     return None
 
 
@@ -268,22 +302,6 @@ def _rm(path: str) -> None:
         os.remove(path)
     except OSError:
         pass
-
-
-def _stream_after() -> float:
-    try:
-        return max(0.0, float(os.environ.get("SHRUTI_STREAM_AFTER", "0.0")))
-    except ValueError:
-        return 0.0
-
-
-def stream_url(video_id: str, audio_only: bool = True) -> Optional[str]:
-    """Direct API URL that ffmpeg can play while the API is still sending."""
-    keys = _live_keys()
-    if not keys:
-        return None
-    kind = "audio" if audio_only else "video"
-    return f"{_base()}/stream/{video_id}?type={kind}&api_key={keys[0]}"
 
 
 _inflight: dict = {}
@@ -309,12 +327,10 @@ async def download(
 ) -> Optional[str]:
     """Return a COMPLETE local file for video_id (or None on failure).
 
-    ROOT FIX: we used to hand FFmpeg the raw /stream API URL. The API only
-    starts sending bytes after it has fetched the track itself, so FFmpeg hit
-    EOF within a second -> StreamEnded -> resume -> API hit again, forever,
-    while the VC stayed silent. A finished local file always plays, seeks
-    and resumes correctly. Concurrent callers (play + prefetch + resume)
-    share one download instead of spending the API quota several times.
+    ROOT FIX: the /stream API URL is not a live stream (the API fetches the
+    track first, then sends it), so handing it to FFmpeg made the VC silent.
+    A finished local file always plays, seeks and resumes. Concurrent callers
+    (play + prefetch + resume) share one download -> quota is spent once.
     """
     cached = _cached_file(video_id, tag)
     if cached:
@@ -327,8 +343,7 @@ async def download(
         task.add_done_callback(lambda _t, k=key: _inflight.pop(k, None))
     while not task.done():
         if cancel_event is not None and cancel_event.is_set():
-            # Do not kill the shared download; another caller may need it.
-            raise asyncio.CancelledError()
+            raise asyncio.CancelledError()  # shared download keeps running
         await asyncio.wait({asyncio.shield(task)}, timeout=0.25)
     if task.cancelled():
         return None
@@ -337,3 +352,7 @@ async def download(
         LOGGER.warning("ShrutiAPI download failed for %s: %r", video_id, exc)
         return None
     return task.result()
+
+
+def last_error() -> str:
+    return str(STATUS.get("last_error") or "unknown error")
