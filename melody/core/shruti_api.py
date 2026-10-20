@@ -286,38 +286,54 @@ def stream_url(video_id: str, audio_only: bool = True) -> Optional[str]:
     return f"{_base()}/stream/{video_id}?type={kind}&api_key={keys[0]}"
 
 
+_inflight: dict = {}
+
+
+def _cached_file(video_id: str, tag: str) -> Optional[str]:
+    import glob
+    for f in glob.glob(f"/tmp/melody_{video_id}_{tag}.*"):
+        if f.endswith(".part"):
+            continue
+        try:
+            if os.path.getsize(f) >= 10 * 1024:
+                return f
+        except OSError:
+            pass
+    return None
+
+
 async def download(
     video_id: str, tag: str, audio_only: bool = True,
     cancel_event: "threading.Event | None" = None,
-    allow_early: bool = True,
+    allow_early: bool = True,  # kept for API compatibility; ignored
 ) -> Optional[str]:
-    """Return playable source for video_id.
-    When streaming for VC playback, instantly returns direct API stream URL (<10ms)
-    so song plays in <1 second with zero download delay.
-    When a complete local file is needed (e.g. /download), downloads to disk."""
-    url = stream_url(video_id, audio_only)
-    if allow_early and url:
-        STATUS["ok"] += 1
-        STATUS["last_ok"] = time.time()
-        LOGGER.info("⚡ ShrutiAPI %s %s streaming directly from API URL",
-                    "audio" if audio_only else "video", video_id)
-        return url
+    """Return a COMPLETE local file for video_id (or None on failure).
 
-    task = asyncio.ensure_future(_download_file(video_id, tag, audio_only=audio_only,
-                                                cancel_event=cancel_event))
-    timeout = _stream_after()
-    if timeout > 0:
-        try:
-            return await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-        except asyncio.TimeoutError:
-            pass
-        except asyncio.CancelledError:
-            task.cancel()
-            raise
-        task.cancel()
-        if url:
-            STATUS["ok"] += 1
-            STATUS["last_ok"] = time.time()
-            return url
-    return await task
-
+    ROOT FIX: we used to hand FFmpeg the raw /stream API URL. The API only
+    starts sending bytes after it has fetched the track itself, so FFmpeg hit
+    EOF within a second -> StreamEnded -> resume -> API hit again, forever,
+    while the VC stayed silent. A finished local file always plays, seeks
+    and resumes correctly. Concurrent callers (play + prefetch + resume)
+    share one download instead of spending the API quota several times.
+    """
+    cached = _cached_file(video_id, tag)
+    if cached:
+        return cached
+    key = f"{video_id}:{tag}:{'a' if audio_only else 'v'}"
+    task = _inflight.get(key)
+    if task is None or task.done():
+        task = asyncio.ensure_future(_download_file(video_id, tag, audio_only=audio_only))
+        _inflight[key] = task
+        task.add_done_callback(lambda _t, k=key: _inflight.pop(k, None))
+    while not task.done():
+        if cancel_event is not None and cancel_event.is_set():
+            # Do not kill the shared download; another caller may need it.
+            raise asyncio.CancelledError()
+        await asyncio.wait({asyncio.shield(task)}, timeout=0.25)
+    if task.cancelled():
+        return None
+    exc = task.exception()
+    if exc is not None:
+        LOGGER.warning("ShrutiAPI download failed for %s: %r", video_id, exc)
+        return None
+    return task.result()
