@@ -1,6 +1,6 @@
 {
   "name": "Apex Vibes",
-  "description": "\ud83c\udfb6 Premium Telegram Music Bot \u2014 YouTube streaming, AutoPlay, Lyrics, Colored Controls",
+  "description": "🎶 Premium Telegram Music Bot — YouTube streaming, AutoPlay, Lyrics, Colored Controls",
   "keywords": [
     "telegram",
     "music",
@@ -36,7 +36,7 @@
       "required": true
     },
     "OWNER_NAME": {
-      "description": "Alias shown in play cards (e.g. Maestro) \u2014 NOT your real name",
+      "description": "Alias shown in play cards (e.g. Maestro) — NOT your real name",
       "value": "Maestro",
       "required": false
     },
@@ -69,11 +69,11 @@
       "required": false
     },
     "SHRUTI_API_KEY": {
-      "description": "ShrutiBots API key from @SHRUTIAPIBOT \u2014 plays /play and /vplay without YouTube cookies or IP blocks. Comma-separate multiple keys to auto-rotate.",
+      "description": "ShrutiBots API key from @SHRUTIAPIBOT — plays /play and /vplay without YouTube cookies or IP blocks. Comma-separate multiple keys to auto-rotate.",
       "required": false
     },
     "YOUTUBE_API_KEY": {
-      "description": "YouTube Data API v3 key \u2014 makes song search/metadata resolve in ~0.3s instead of several seconds. Comma-separate multiple keys to auto-rotate on quota.",
+      "description": "YouTube Data API v3 key — makes song search/metadata resolve in ~0.3s instead of several seconds. Comma-separate multiple keys to auto-rotate on quota.",
       "required": false
     },
     "AUTOPLAY": {
@@ -173,13 +173,5 @@
       "size": "standard-2x"
     }
   },
-  "buildpacks": [
-    {
-      "url": "heroku-community/apt"
-    },
-    {
-      "url": "heroku/python"
-    }
-  ],
-  "stack": "heroku-26"
+  "stack": "container"
 }
