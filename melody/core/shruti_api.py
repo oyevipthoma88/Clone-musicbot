@@ -244,14 +244,92 @@ def _fail(why: str) -> None:
     STATUS["last_error"] = why[:200]
 
 
+def _fast_timeout() -> httpx.Timeout:
+    """Per-request timeout for /stream.
+
+    ROOT FIX (ReadTimeout / 30-90s waits): the shared client used
+    SHRUTI_TIMEOUT (25-60s) as the *read* timeout, so a hung mirror
+    (api.shrutibots.in) sat silent for the whole budget before the next
+    mirror was even tried. Now a stalled mirror is dropped after
+    SHRUTI_READ_TIMEOUT seconds of silence (default 8) and the other
+    mirror is already racing in parallel (see _hedge_delay).
+    """
+    try:
+        rd = float(os.environ.get("SHRUTI_READ_TIMEOUT", "8"))
+    except ValueError:
+        rd = 8.0
+    return httpx.Timeout(connect=4.0, read=rd, write=10.0, pool=4.0)
+
+
+def _hedge_delay() -> float:
+    """Seconds to wait for the first mirror's headers before starting the
+    next mirror in parallel (default 2.5). Healthy mirrors answer in <2s,
+    so quota is normally spent only once."""
+    try:
+        return max(0.0, float(os.environ.get("SHRUTI_HEDGE_DELAY", "2.5")))
+    except ValueError:
+        return 2.5
+
+
+class _KeyError(Exception):
+    pass
+
+
+class _HardFail(Exception):
+    pass
+
+
+async def _fetch_one(client, base: str, video_id: str, key: str, kind: str,
+                     audio_only: bool, tmp: str, headers_ok: asyncio.Event):
+    """Download from ONE mirror. Returns (ext, size). Raises _KeyError on key
+    problems, _HardFail on video/IP problems, anything else = network."""
+    url = f"{base}/stream/{video_id}"
+    for attempt in range(2):
+        async with client.stream("GET", url, params={"type": kind, "api_key": key},
+                                 timeout=_fast_timeout()) as r:
+            if r.status_code != 200:
+                body = (await r.aread())[:300].decode("utf-8", "ignore")
+                s = r.status_code
+                LOGGER.warning("ShrutiAPI %s %s -> HTTP %s via %s: %s", kind, video_id, s, base, body)
+                low = body.lower()
+                if s == 401 or (s == 403 and "your ip" not in low):
+                    _cool(key, 1800, f"{s} {body}")
+                    raise _KeyError(f"{s} {body}")
+                if s == 429 and "quota" in low:
+                    _cool(key, 1800, body)
+                    raise _KeyError(body)
+                if s == 403:
+                    raise _HardFail(f"{s} {body}")
+                if s in (429, 500, 502, 503, 504) and attempt == 0:
+                    await asyncio.sleep(0.5)
+                    continue
+                raise _HardFail(f"{s} {body}")
+            ct = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
+            if ct.startswith("application/json") or ct.startswith("text/"):
+                body = (await r.aread())[:300].decode("utf-8", "ignore")
+                LOGGER.warning("ShrutiAPI non-media reply for %s (%s): %s", video_id, ct, body)
+                raise _HardFail(f"non-media {ct}: {body}")
+            headers_ok.set()
+            ext = _CT_EXT.get(ct) or ("m4a" if audio_only else "mp4")
+            size = 0
+            with open(tmp, "wb") as fh:
+                async for chunk in r.aiter_bytes(256 * 1024):
+                    fh.write(chunk)
+                    size += len(chunk)
+            return ext, size
+    raise _HardFail("retry exhausted")
+
+
 async def _download_file(
     video_id: str, tag: str, audio_only: bool = True,
 ) -> Optional[str]:
     """Download the full file into /tmp/melody_<video_id>_<tag>.<ext>.
 
-    Rotates keys on key errors, retries 429/500/network errors briefly and
-    falls back to the legacy domain on network errors. Every failure is
-    logged with the API's own reason, so "gana nahi baja" is never a mystery.
+    ROOT FIX: mirrors are HEDGED instead of tried one-by-one. The primary
+    mirror starts immediately; if it has not sent headers within
+    SHRUTI_HEDGE_DELAY seconds the next mirror starts in parallel and the
+    first complete file wins (losers are cancelled). A hung mirror can no
+    longer block playback for 30-90s with ReadTimeout('').
     """
     keys = _live_keys()
     if not keys:
@@ -264,71 +342,91 @@ async def _download_file(
     kind = "audio" if audio_only else "video"
     client = _get_client()
     t0 = time.monotonic()
-    tmp = f"/tmp/melody_{video_id}_{tag}.shruti.part"
+    hard_error = None
 
     for key in keys:
-        for base in _bases():
-            url = f"{base}/stream/{video_id}"
-            for attempt in range(2):
+        bases = _bases()
+        tasks: dict = {}
+        events: dict = {}
+        tmps: dict = {}
+
+        def _start(i: int) -> None:
+            b = bases[i]
+            tmps[b] = f"/tmp/melody_{video_id}_{tag}.{i}.shruti.part"
+            events[b] = asyncio.Event()
+            tasks[asyncio.ensure_future(
+                _fetch_one(client, b, video_id, key, kind, audio_only, tmps[b], events[b])
+            )] = b
+
+        _start(0)
+        nxt = 1
+        key_bad = False
+        try:
+            while tasks:
+                timeout = None
+                if nxt < len(bases):
+                    timeout = _hedge_delay()
+                done, _ = await asyncio.wait(set(tasks), timeout=timeout,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if not done:
+                    # nobody finished; hedge if no mirror has started sending
+                    if nxt < len(bases) and not any(e.is_set() for e in events.values()):
+                        LOGGER.info("ShrutiAPI %s slow on %s — hedging %s",
+                                    video_id, bases[nxt - 1], bases[nxt])
+                        _start(nxt)
+                        nxt += 1
+                    elif nxt < len(bases):
+                        # a mirror is streaming bytes; stop hedging timer
+                        nxt_wait = None
+                        done, _ = await asyncio.wait(set(tasks), timeout=nxt_wait,
+                                                     return_when=asyncio.FIRST_COMPLETED)
+                    if not done:
+                        continue
+                for t in done:
+                    b = tasks.pop(t)
+                    exc = t.exception()
+                    if exc is None:
+                        ext, size = t.result()
+                        if size < 10 * 1024:
+                            LOGGER.warning("ShrutiAPI tiny file (%sB) for %s", size, video_id)
+                            _rm(tmps[b])
+                            hard_error = f"tiny file {size}B"
+                            continue
+                        final = f"/tmp/melody_{video_id}_{tag}.{ext}"
+                        os.replace(tmps[b], final)
+                        STATUS["ok"] += 1
+                        STATUS["last_ok"] = time.time()
+                        LOGGER.info("⚡ ShrutiAPI %s %s ready in %.1fs (%d KB) via %s",
+                                    kind, video_id, time.monotonic() - t0, size // 1024, b)
+                        return final
+                    _rm(tmps[b])
+                    if isinstance(exc, _KeyError):
+                        key_bad = True
+                    elif isinstance(exc, _HardFail):
+                        hard_error = str(exc)
+                    else:
+                        LOGGER.warning("ShrutiAPI network error for %s via %s: %r", video_id, b, exc)
+                        STATUS["last_error"] = repr(exc)[:200]
+                    # a mirror failed -> start the next one immediately
+                    if nxt < len(bases) and not key_bad:
+                        _start(nxt)
+                        nxt += 1
+                if key_bad:
+                    break
+        finally:
+            for t, b in list(tasks.items()):
+                t.cancel()
+            for t in list(tasks):
                 try:
-                    async with client.stream("GET", url, params={"type": kind, "api_key": key}) as r:
-                        if r.status_code != 200:
-                            body = (await r.aread())[:300].decode("utf-8", "ignore")
-                            s = r.status_code
-                            LOGGER.warning("ShrutiAPI %s %s -> HTTP %s: %s", kind, video_id, s, body)
-                            low = body.lower()
-                            if s == 401 or (s == 403 and "your ip" not in low):
-                                _cool(key, 1800, f"{s} {body}")
-                                break  # next key
-                            if s == 429 and "quota" in low:
-                                _cool(key, 1800, body)
-                                break  # next key
-                            if s == 403:  # IP blocked: other keys/domains won't help now
-                                _fail(f"{s} {body}")
-                                return None
-                            if s in (429, 500, 502, 503, 504) and attempt == 0:
-                                await asyncio.sleep(1.0)
-                                continue
-                            _fail(f"{s} {body}")
-                            return None  # 400 / repeated 500: video-side problem
-                        ct = (r.headers.get("content-type") or "").split(";")[0].strip().lower()
-                        if ct.startswith("application/json") or ct.startswith("text/"):
-                            body = (await r.aread())[:300].decode("utf-8", "ignore")
-                            LOGGER.warning("ShrutiAPI non-media reply for %s (%s): %s", video_id, ct, body)
-                            _fail(f"non-media {ct}: {body}")
-                            return None
-                        ext = _CT_EXT.get(ct) or ("m4a" if audio_only else "mp4")
-                        size = 0
-                        with open(tmp, "wb") as fh:
-                            async for chunk in r.aiter_bytes(256 * 1024):
-                                fh.write(chunk)
-                                size += len(chunk)
-                    if size < 10 * 1024:
-                        LOGGER.warning("ShrutiAPI tiny file (%sB) for %s", size, video_id)
-                        _rm(tmp)
-                        _fail(f"tiny file {size}B")
-                        return None
-                    final = f"/tmp/melody_{video_id}_{tag}.{ext}"
-                    os.replace(tmp, final)
-                    STATUS["ok"] += 1
-                    STATUS["last_ok"] = time.time()
-                    LOGGER.info("⚡ ShrutiAPI %s %s ready in %.1fs (%d KB) via %s",
-                                kind, video_id, time.monotonic() - t0, size // 1024, base)
-                    return final
-                except asyncio.CancelledError:
-                    _rm(tmp)
-                    raise
-                except Exception as exc:  # noqa: BLE001  network / timeout
-                    _rm(tmp)
-                    LOGGER.warning("ShrutiAPI network error for %s via %s: %r", video_id, base, exc)
-                    STATUS["last_error"] = repr(exc)[:200]
-                    break  # try the next domain
-            else:
-                continue
-            # inner loop broke: key error -> next key, network error -> next base
-            if key in _key_cooldown and _key_cooldown[key] > time.time():
-                break
-    _fail(STATUS.get("last_error") or "all keys/domains failed")
+                    await t
+                except BaseException:  # noqa: BLE001
+                    pass
+            for p in tmps.values():
+                _rm(p)
+        if hard_error and not key_bad:
+            _fail(hard_error)
+            return None
+    _fail(hard_error or STATUS.get("last_error") or "all keys/domains failed")
     return None
 
 
